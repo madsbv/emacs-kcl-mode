@@ -37,6 +37,7 @@
 
 (require 'treesit)
 (require 'rx)
+(require 'kcl-mode)  ; shared commands and customization
 
 (declare-function treesit-parser-create "treesit.c")
 
@@ -272,6 +273,9 @@ language for cloud-native configuration.
   (setq-local electric-indent-chars
               (append '(?: ?\} ?\] ?\)) electric-indent-chars))
 
+  ;; Format on save
+  (add-hook 'before-save-hook #'kcl--format-on-save nil t)
+
   (treesit-major-mode-setup))
 
 (defvar kcl-ts-mode-map
@@ -280,30 +284,6 @@ language for cloud-native configuration.
     (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
     map)
   "Keymap for `kcl-ts-mode'.")
-
-;; Reuse interactive commands from kcl-mode if available
-(unless (fboundp 'kcl-run-buffer)
-  (defun kcl-run-buffer ()
-    "Run the current KCL buffer using `kcl run'."
-    (interactive)
-    (let ((file (buffer-file-name)))
-      (if file
-          (compile (format "kcl run %s" (shell-quote-argument file)))
-        (user-error "Buffer is not visiting a file")))))
-
-(unless (fboundp 'kcl-format-buffer)
-  (defun kcl-format-buffer ()
-    "Format the current KCL buffer using `kcl fmt'."
-    (interactive)
-    (let ((file (buffer-file-name)))
-      (if file
-          (progn
-            (save-buffer)
-            (let ((output (shell-command-to-string
-                           (format "kcl fmt %s" (shell-quote-argument file)))))
-              (revert-buffer t t t)
-              (message "KCL formatted: %s" (string-trim output))))
-        (user-error "Buffer is not visiting a file")))))
 
 ;;; Auto-mode integration
 ;; When tree-sitter grammar is available, prefer kcl-ts-mode over kcl-mode

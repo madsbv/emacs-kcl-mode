@@ -48,6 +48,16 @@
   :type '(repeat string)
   :group 'kcl)
 
+(defcustom kcl-command "kcl"
+  "Path to the kcl CLI executable."
+  :type 'string
+  :group 'kcl)
+
+(defcustom kcl-format-on-save nil
+  "If non-nil, format KCL buffers with `kcl fmt' before saving."
+  :type 'boolean
+  :group 'kcl)
+
 ;;; Syntax Table
 
 (defvar kcl-mode-syntax-table
@@ -373,21 +383,39 @@
   (interactive)
   (let ((file (buffer-file-name)))
     (if file
-        (compile (format "kcl run %s" (shell-quote-argument file)))
+        (compile (format "%s run %s"
+                         (shell-quote-argument kcl-command)
+                         (shell-quote-argument file)))
       (user-error "Buffer is not visiting a file"))))
 
 (defun kcl-format-buffer ()
-  "Format the current KCL buffer using `kcl fmt'."
+  "Format the current KCL buffer using `kcl fmt'.
+Saves the buffer, runs `kcl fmt' on the file, and reverts to
+pick up the formatted version.  Preserves point position."
   (interactive)
-  (let ((file (buffer-file-name)))
+  (let ((file (buffer-file-name))
+        (pos (point)))
     (if file
         (progn
           (save-buffer)
-          (let ((output (shell-command-to-string
-                         (format "kcl fmt %s" (shell-quote-argument file)))))
-            (revert-buffer t t t)
-            (message "KCL formatted: %s" (string-trim output))))
+          (let* ((cmd (format "%s fmt %s"
+                              (shell-quote-argument kcl-command)
+                              (shell-quote-argument file)))
+                 (exit-code (call-process-shell-command cmd nil "*kcl-fmt*" nil)))
+            (if (zerop exit-code)
+                (progn
+                  (revert-buffer t t t)
+                  (goto-char (min pos (point-max)))
+                  (message "Formatted %s" (file-name-nondirectory file)))
+              (message "kcl fmt failed (exit %d); see *kcl-fmt* buffer"
+                       exit-code))))
       (user-error "Buffer is not visiting a file"))))
+
+(defun kcl--format-on-save ()
+  "Run `kcl-format-buffer' if `kcl-format-on-save' is enabled.
+Intended for use on `before-save-hook'."
+  (when kcl-format-on-save
+    (kcl-format-buffer)))
 
 ;;; Mode Definition
 
@@ -453,7 +481,10 @@ language for cloud-native configuration.
   (setq-local outline-regexp
               (rx line-start (* space)
                   (or "schema" "mixin" "protocol" "rule" "type")
-                  space)))
+                  space))
+
+  ;; Format on save
+  (add-hook 'before-save-hook #'kcl--format-on-save nil t))
 
 (defun kcl-mode--syntactic-face-function (ppss)
   "Return face for syntax at PPSS.
