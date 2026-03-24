@@ -157,8 +157,14 @@ Add the following to your Doom Emacs configuration:
 ### `packages.el`
 
 ```elisp
+;; From GitHub:
 (package! kcl-mode
   :recipe (:host github :repo "kcl-lang/emacs-kcl-mode"))
+
+;; Or from a local git repo (useful during development):
+(package! kcl-mode
+  :recipe (:local-repo "/path/to/emacs-kcl-mode"
+           :build (:not compile)))
 ```
 
 ### `config.el`
@@ -168,12 +174,23 @@ Add the following to your Doom Emacs configuration:
 (use-package! kcl-mode
   :mode "\\.k\\'"
   :config
-  (setq kcl-format-on-save t))
+  (setq kcl-format-on-save t)
+
+  ;; Evil localleader keybindings (SPC m)
+  (map! :localleader
+        :map kcl-mode-map
+        :desc "Run buffer"    "r" #'kcl-run-buffer
+        :desc "Format buffer" "f" #'kcl-format-buffer))
 
 ;; Tree-sitter mode (Emacs 29+, Doom with +tree-sitter)
 (use-package! kcl-ts-mode
   :when (modulep! :tools tree-sitter)
-  :mode "\\.k\\'")
+  :mode "\\.k\\'"
+  :config
+  (map! :localleader
+        :map kcl-ts-mode-map
+        :desc "Run buffer"    "r" #'kcl-run-buffer
+        :desc "Format buffer" "f" #'kcl-format-buffer))
 
 ;; LSP integration
 ;; Option A: lsp-mode (if you use the :tools lsp module)
@@ -187,6 +204,20 @@ Add the following to your Doom Emacs configuration:
 ;;   (require 'kcl-eglot))
 ;; (add-hook! (kcl-mode kcl-ts-mode) #'eglot-ensure)
 ```
+
+With LSP enabled, Doom's built-in `SPC c` bindings work automatically in KCL buffers:
+
+| Key       | Action                |
+|-----------|-----------------------|
+| `SPC m r` | Run file (`kcl run`)  |
+| `SPC m f` | Format (`kcl fmt`)    |
+| `SPC c d` | Go to definition      |
+| `SPC c D` | Find references       |
+| `SPC c a` | Code action           |
+| `SPC c r` | Rename symbol         |
+| `SPC c f` | Format (via LSP)      |
+| `SPC c k` | Documentation lookup  |
+| `SPC c x` | List diagnostics      |
 
 If the language server is installed somewhere non-standard (e.g., via Nix):
 
@@ -210,10 +241,17 @@ If you manage your system with Nix and want the language server available withou
 
 ## Key Bindings
 
-| Key         | Command              | Description                      |
-|-------------|----------------------|----------------------------------|
-| `C-c C-r`   | `kcl-run-buffer`     | Run the current file with `kcl`  |
-| `C-c C-f`   | `kcl-format-buffer`  | Format the current file          |
+### Emacs
+
+| Key       | Command              | Description                      |
+|-----------|----------------------|----------------------------------|
+| `C-c C-r` | `kcl-run-buffer`     | Run the current file with `kcl`  |
+| `C-c C-f` | `kcl-format-buffer`  | Format the current file          |
+
+### Evil (Doom Emacs)
+
+See the [Doom Emacs](#doom-emacs) section for `SPC m` localleader bindings.
+LSP actions (`SPC c d`, `SPC c r`, etc.) work automatically when LSP is enabled.
 
 ## Customization
 
