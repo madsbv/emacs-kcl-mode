@@ -21,9 +21,9 @@
   (should (featurep 'kcl-lsp)))
 
 (ert-deftest kcl-lsp-server-command-default ()
-  "Test default server command."
+  "Test default server command is nil (falls back to core variable)."
   (require 'kcl-lsp)
-  (should (equal kcl-lsp-server-command '("kcl-language-server"))))
+  (should (null kcl-lsp-server-command)))
 
 (ert-deftest kcl-lsp-auto-start-default ()
   "Test auto-start is off by default."
@@ -56,12 +56,13 @@
   (should (featurep 'kcl-eglot)))
 
 (ert-deftest kcl-eglot-server-command-default ()
-  "Test default eglot server command."
+  "Test default eglot server command is nil (falls back to core variable)."
   (require 'kcl-eglot)
-  (should (equal kcl-eglot-server-command '("kcl-language-server"))))
+  (should (null kcl-eglot-server-command)))
 
 (ert-deftest kcl-eglot-registers-kcl-mode ()
   "Test that kcl-mode is registered in eglot-server-programs."
+  (require 'eglot)
   (require 'kcl-eglot)
   (let ((entry (assoc 'kcl-mode eglot-server-programs)))
     (should entry)
@@ -70,6 +71,7 @@
 
 (ert-deftest kcl-eglot-registers-kcl-ts-mode ()
   "Test that kcl-ts-mode is registered in eglot-server-programs."
+  (require 'eglot)
   (require 'kcl-eglot)
   (let ((entry (assoc 'kcl-ts-mode eglot-server-programs)))
     (should entry)
@@ -77,6 +79,7 @@
 
 (ert-deftest kcl-eglot-custom-command ()
   "Test custom server command is used."
+  (require 'eglot)
   (require 'kcl-eglot)
   (let ((kcl-eglot-server-command '("custom-kcl-lsp" "--stdio"))
         (eglot-server-programs (copy-sequence eglot-server-programs)))

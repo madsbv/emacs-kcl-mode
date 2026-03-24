@@ -41,6 +41,11 @@
 (require 'ansi-color)
 (require 'compile)
 
+;; Declarations for optional transient integration
+(declare-function transient-define-prefix "transient" t)
+(declare-function kcl-transient-menu "kcl-mode")
+(defvar kcl-transient-menu)
+
 ;;; Customization
 
 (defgroup kcl nil
@@ -274,7 +279,7 @@ Supported values: \"yaml\", \"json\", \"toml\"."
   "Syntax propertize rules for KCL mode.")
 
 (defun kcl-mode--syntax-propertize-triple-quote ()
-  "Handle triple-quoted strings for syntax-propertize."
+  "Handle triple-quoted strings for `syntax-propertize'."
   (let* ((start (match-beginning 0))
          (ppss (save-excursion (syntax-ppss start))))
     (unless (nth 4 ppss)  ; not in a comment
@@ -303,7 +308,7 @@ Supported values: \"yaml\", \"json\", \"toml\"."
                                  'syntax-table (string-to-syntax "|")))))))))
 
 (defun kcl-mode--syntax-propertize-interpolation ()
-  "Handle string interpolation ${...} for syntax-propertize."
+  "Handle string interpolation ${...} for `syntax-propertize'."
   ;; Mark ${ and matching } to suppress string syntax inside interpolation
   (let ((start (match-beginning 0))
         (ppss (save-excursion (syntax-ppss (match-beginning 0)))))
@@ -386,25 +391,28 @@ Supported values: \"yaml\", \"json\", \"toml\"."
 
 ;;; Mode Map
 
+(defun kcl--define-keys (map)
+  "Populate MAP with the standard KCL keybindings."
+  ;; Run / Eval
+  (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
+  (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
+  (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
+  (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
+  ;; Tooling
+  (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
+  (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
+  (define-key map (kbd "C-c C-t") #'kcl-test)
+  (define-key map (kbd "C-c C-v") #'kcl-vet)
+  ;; Project
+  (define-key map (kbd "C-c C-i") #'kcl-goto-imports)
+  ;; Documentation
+  (define-key map (kbd "C-c C-h") #'kcl-open-doc-at-point)
+  ;; Transient
+  (define-key map (kbd "C-c C-c") #'kcl-transient)
+  map)
+
 (defvar kcl-mode-map
-  (let ((map (make-sparse-keymap)))
-    ;; Run / Eval
-    (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
-    (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
-    (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
-    (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
-    ;; Tooling
-    (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
-    (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
-    (define-key map (kbd "C-c C-t") #'kcl-test)
-    (define-key map (kbd "C-c C-v") #'kcl-vet)
-    ;; Project
-    (define-key map (kbd "C-c C-i") #'kcl-goto-imports)
-    ;; Documentation
-    (define-key map (kbd "C-c C-h") #'kcl-open-doc-at-point)
-    ;; Transient
-    (define-key map (kbd "C-c C-c") #'kcl-transient)
-    map)
+  (kcl--define-keys (make-sparse-keymap))
   "Keymap for `kcl-mode'.")
 
 ;;; Interactive Commands
@@ -419,33 +427,45 @@ Supported values: \"yaml\", \"json\", \"toml\"."
                          (shell-quote-argument file)))
       (user-error "Buffer is not visiting a file"))))
 
+(defvar-local kcl--formatting nil
+  "Non-nil while `kcl-format-buffer' is running, to prevent recursion.")
+
 (defun kcl-format-buffer ()
   "Format the current KCL buffer using `kcl fmt'.
-Saves the buffer, runs `kcl fmt' on the file, and reverts to
-pick up the formatted version.  Preserves point position."
+Saves the buffer, runs `kcl fmt' on the file, and replaces
+buffer contents with the formatted version.  Preserves point
+position."
   (interactive)
   (let ((file (buffer-file-name))
         (pos (point)))
     (if file
         (progn
-          (save-buffer)
+          (let ((kcl--formatting t))
+            (save-buffer))
           (let* ((cmd (format "%s fmt %s"
                               (shell-quote-argument kcl-command)
                               (shell-quote-argument file)))
                  (exit-code (call-process-shell-command cmd nil "*kcl-fmt*" nil)))
             (if (zerop exit-code)
-                (progn
-                  (revert-buffer t t t)
-                  (goto-char (min pos (point-max)))
-                  (message "Formatted %s" (file-name-nondirectory file)))
+                (let ((tmp-buf (generate-new-buffer " *kcl-fmt-result*")))
+                  (unwind-protect
+                      (progn
+                        (with-current-buffer tmp-buf
+                          (insert-file-contents file))
+                        (replace-buffer-contents tmp-buf)
+                        (set-buffer-modified-p nil)
+                        (goto-char (min pos (point-max)))
+                        (message "Formatted %s" (file-name-nondirectory file)))
+                    (kill-buffer tmp-buf)))
               (message "kcl fmt failed (exit %d); see *kcl-fmt* buffer"
                        exit-code))))
       (user-error "Buffer is not visiting a file"))))
 
 (defun kcl--format-on-save ()
   "Run `kcl-format-buffer' if `kcl-format-on-save' is enabled.
-Intended for use on `before-save-hook'."
-  (when kcl-format-on-save
+Intended for use on `before-save-hook'.  The guard variable
+`kcl--formatting' prevents recursive saves."
+  (when (and kcl-format-on-save (not kcl--formatting))
     (kcl-format-buffer)))
 
 ;;; Project Root
@@ -866,66 +886,64 @@ If no imports exist, jump to the beginning of the buffer."
 
 (defun kcl-flymake-backend (report-fn &rest _args)
   "Flymake backend for KCL using `kcl lint'.
-REPORT-FN is the Flymake callback."
+REPORT-FN is the Flymake callback.  Writes buffer contents to a
+temporary file so that unsaved buffers can be checked without
+forcing a save."
   (when (process-live-p kcl--flymake-proc)
     (kill-process kcl--flymake-proc))
   (let* ((source (current-buffer))
          (file (buffer-file-name)))
-    (unless file
-      (funcall report-fn nil)
-      (cl-return-from kcl-flymake-backend))
-    (save-buffer)
-    (setq kcl--flymake-proc
-          (make-process
-           :name "kcl-flymake"
-           :noquery t
-           :connection-type 'pipe
-           :buffer (generate-new-buffer " *kcl-flymake*")
-           :command (list kcl-command "lint" "--no_style" file)
-           :sentinel
-           (lambda (proc _event)
-             (when (memq (process-status proc) '(exit signal))
-               (unwind-protect
-                   (when (eq proc (buffer-local-value 'kcl--flymake-proc source))
-                     (with-current-buffer (process-buffer proc)
-                       (goto-char (point-min))
-                       (let ((diags nil)
-                             (source-file (buffer-file-name source)))
-                         (while (re-search-forward
-                                 " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)"
-                                 nil t)
-                           (let* ((diag-file (match-string 1))
-                                  (line (string-to-number (match-string 2)))
-                                  (col (string-to-number (match-string 3)))
-                                  ;; Look backward for error/warning type
-                                  (type (save-excursion
-                                          (if (re-search-backward
-                                               "^warning\\[W[0-9]+\\]" nil t)
-                                              :warning
-                                            :error)))
-                                  ;; Get the message from the line after -->
-                                  (msg (save-excursion
-                                         (forward-line 0)
-                                         (buffer-substring-no-properties
-                                          (point) (line-end-position)))))
-                             ;; Only report diagnostics for the source file
-                             (when (and source-file
-                                        (string= (expand-file-name diag-file)
-                                                 (expand-file-name source-file)))
-                               (with-current-buffer source
-                                 (save-excursion
-                                   (goto-char (point-min))
-                                   (forward-line (1- line))
-                                   (let* ((bol (point))
-                                          (eol (line-end-position))
-                                          (beg (min (+ bol (1- col)) eol))
-                                          (end (min (+ beg 1) eol)))
-                                     (push (flymake-make-diagnostic
-                                            source beg end type
-                                            (string-trim msg))
-                                           diags)))))))
-                         (funcall report-fn (nreverse diags)))))
-                 (kill-buffer (process-buffer proc)))))))))
+    (if (not file)
+        (funcall report-fn nil)
+      (let ((temp-file (make-temp-file "kcl-flymake-" nil ".k")))
+        (write-region (point-min) (point-max) temp-file nil 'silent)
+        (setq kcl--flymake-proc
+              (make-process
+               :name "kcl-flymake"
+               :noquery t
+               :connection-type 'pipe
+               :buffer (generate-new-buffer " *kcl-flymake*")
+               :command (list kcl-command "lint" "--no_style" temp-file)
+               :sentinel
+               (lambda (proc _event)
+                 (when (memq (process-status proc) '(exit signal))
+                   (unwind-protect
+                       (when (eq proc (buffer-local-value 'kcl--flymake-proc source))
+                         (with-current-buffer (process-buffer proc)
+                           (goto-char (point-min))
+                           (let ((diags nil))
+                             (while (re-search-forward
+                                     " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)"
+                                     nil t)
+                               (let* ((line (string-to-number (match-string 2)))
+                                      (col (string-to-number (match-string 3)))
+                                      ;; Look backward for error/warning type
+                                      (type (save-excursion
+                                              (if (re-search-backward
+                                                   "^warning\\[W[0-9]+\\]" nil t)
+                                                  :warning
+                                                :error)))
+                                      ;; Get the message from the --> line
+                                      (msg (save-excursion
+                                             (forward-line 0)
+                                             (buffer-substring-no-properties
+                                              (point) (line-end-position)))))
+                                 (with-current-buffer source
+                                   (save-excursion
+                                     (goto-char (point-min))
+                                     (forward-line (1- line))
+                                     (let* ((bol (point))
+                                            (eol (line-end-position))
+                                            (beg (min (+ bol (1- col)) eol))
+                                            (end (min (+ beg 1) eol)))
+                                       (push (flymake-make-diagnostic
+                                              source beg end type
+                                              (string-trim msg))
+                                             diags))))))
+                             (funcall report-fn (nreverse diags)))))
+                     (ignore-errors (delete-file temp-file))
+                      (kill-buffer (process-buffer proc)))))))))))
+
 
 ;;; Transient Menu
 

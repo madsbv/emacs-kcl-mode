@@ -236,24 +236,7 @@ Uses tree-sitter to find the enclosing schema/rule/protocol."
 ;;; Mode definition
 
 (defvar kcl-ts-mode-map
-  (let ((map (make-sparse-keymap)))
-    ;; Run / Eval
-    (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
-    (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
-    (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
-    (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
-    ;; Tooling
-    (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
-    (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
-    (define-key map (kbd "C-c C-t") #'kcl-test)
-    (define-key map (kbd "C-c C-v") #'kcl-vet)
-    ;; Project
-    (define-key map (kbd "C-c C-i") #'kcl-goto-imports)
-    ;; Documentation
-    (define-key map (kbd "C-c C-h") #'kcl-open-doc-at-point)
-    ;; Transient
-    (define-key map (kbd "C-c C-c") #'kcl-transient)
-    map)
+  (kcl--define-keys (make-sparse-keymap))
   "Keymap for `kcl-ts-mode'.")
 
 ;;;###autoload
@@ -338,6 +321,7 @@ language for cloud-native configuration.
 ;; installation.  This is deferred via eval-after-load to avoid a hard
 ;; dependency on treesit-auto.
 (declare-function make-treesit-auto-recipe "treesit-auto")
+(declare-function treesit-auto-recipe-lang "treesit-auto")
 (defvar treesit-auto-recipe-list)
 (defvar treesit-auto-langs)
 

@@ -34,29 +34,46 @@
 
 ;;; Code:
 
-(require 'eglot)
+(require 'kcl-mode)
+
+(declare-function eglot-ensure "eglot")
+(defvar eglot-server-programs)
 
 (defgroup kcl-eglot nil
   "Eglot integration for KCL."
   :group 'kcl
   :prefix "kcl-eglot-")
 
-(defcustom kcl-eglot-server-command '("kcl-language-server")
-  "Command and arguments to start the KCL language server for eglot."
-  :type '(repeat string)
+(defcustom kcl-eglot-server-command nil
+  "Command and arguments to start the KCL language server for eglot.
+When nil, falls back to `kcl-language-server-command' from `kcl-mode'."
+  :type '(choice (const :tag "Use kcl-language-server-command" nil)
+                 (repeat string))
   :group 'kcl-eglot)
+
+(defun kcl-eglot--server-command ()
+  "Return the KCL language server command for eglot.
+Uses `kcl-eglot-server-command' if set, otherwise falls back to
+`kcl-language-server-command'."
+  (or kcl-eglot-server-command kcl-language-server-command))
 
 (defun kcl-eglot-register ()
   "Register the KCL language server with eglot.
 Adds entries for both `kcl-mode' and `kcl-ts-mode' to
 `eglot-server-programs'."
-  (add-to-list 'eglot-server-programs
-               `(kcl-mode . ,kcl-eglot-server-command))
-  (add-to-list 'eglot-server-programs
-               `(kcl-ts-mode . ,kcl-eglot-server-command)))
+  (let ((cmd (kcl-eglot--server-command)))
+    (add-to-list 'eglot-server-programs
+                 `(kcl-mode . ,cmd))
+    (add-to-list 'eglot-server-programs
+                 `(kcl-ts-mode . ,cmd))))
 
-;; Register on load
-(kcl-eglot-register)
+;; Register when eglot is loaded (deferred to avoid hard dependency)
+(eval-after-load 'eglot
+  '(kcl-eglot-register))
+
+;; Also register immediately if eglot is already loaded
+(when (featurep 'eglot)
+  (kcl-eglot-register))
 
 (provide 'kcl-eglot)
 

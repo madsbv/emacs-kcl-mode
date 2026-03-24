@@ -47,7 +47,10 @@
 ;; Defer lsp-mode require to avoid hard dependency at load time
 (declare-function lsp-register-client "lsp-mode")
 (declare-function lsp-stdio-connection "lsp-mode")
+(declare-function lsp-activate-on "lsp-mode")
+(declare-function make-lsp-client "lsp-mode")
 (declare-function lsp "lsp-mode")
+(defvar lsp-language-id-configuration)
 (declare-function lsp-deferred "lsp-mode")
 
 (defgroup kcl-lsp nil
@@ -55,10 +58,12 @@
   :group 'kcl
   :prefix "kcl-lsp-")
 
-(defcustom kcl-lsp-server-command '("kcl-language-server")
-  "Command and arguments to start the KCL language server.
-The server must support the Language Server Protocol over stdio."
-  :type '(repeat string)
+(defcustom kcl-lsp-server-command nil
+  "Command and arguments to start the KCL language server for lsp-mode.
+The server must support the Language Server Protocol over stdio.
+When nil, falls back to `kcl-language-server-command' from `kcl-mode'."
+  :type '(choice (const :tag "Use kcl-language-server-command" nil)
+                 (repeat string))
   :group 'kcl-lsp)
 
 (defcustom kcl-lsp-auto-start nil
@@ -68,8 +73,10 @@ When nil, use `M-x lsp' or `M-x lsp-deferred' to start manually."
   :group 'kcl-lsp)
 
 (defun kcl-lsp--server-command ()
-  "Return the KCL language server command."
-  kcl-lsp-server-command)
+  "Return the KCL language server command.
+Uses `kcl-lsp-server-command' if set, otherwise falls back to
+`kcl-language-server-command'."
+  (or kcl-lsp-server-command kcl-language-server-command))
 
 (defun kcl-lsp-register ()
   "Register the KCL language server with lsp-mode.
