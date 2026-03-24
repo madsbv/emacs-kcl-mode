@@ -294,6 +294,27 @@ language for cloud-native configuration.
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.k\\'" . kcl-ts-mode))
 
+;;; treesit-auto integration
+;; When treesit-auto is available, register a recipe for automatic grammar
+;; installation.  This is deferred via eval-after-load to avoid a hard
+;; dependency on treesit-auto.
+(declare-function make-treesit-auto-recipe "treesit-auto")
+(defvar treesit-auto-recipe-list)
+(defvar treesit-auto-langs)
+
+(eval-after-load 'treesit-auto
+  '(let ((kcl-recipe (make-treesit-auto-recipe
+                      :lang 'kcl
+                      :ts-mode 'kcl-ts-mode
+                      :remap 'kcl-mode
+                      :url "https://github.com/kcl-lang/tree-sitter-kcl"
+                      :ext "\\.k\\'")))
+     (unless (seq-find (lambda (r) (eq (treesit-auto-recipe-lang r) 'kcl))
+                       treesit-auto-recipe-list)
+       (add-to-list 'treesit-auto-recipe-list kcl-recipe))
+     (unless (memq 'kcl treesit-auto-langs)
+       (add-to-list 'treesit-auto-langs 'kcl))))
+
 (provide 'kcl-ts-mode)
 
 ;;; kcl-ts-mode.el ends here
