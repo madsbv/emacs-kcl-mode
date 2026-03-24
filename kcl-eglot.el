@@ -1,12 +1,13 @@
 ;;; kcl-eglot.el --- eglot integration for KCL -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024 The KCL Authors
+;; Copyright (C) 2025-2026 The KCL Authors
 ;; SPDX-License-Identifier: Apache-2.0
 
-;; Author: emacs-kcl-mode contributors
+;; Author: The KCL Authors
+;; Maintainer: The KCL Authors
 ;; URL: https://github.com/kcl-lang/emacs-kcl-mode
 ;; Version: 0.1.0
-;; Keywords: languages, kcl, lsp, eglot
+;; Keywords: languages, tools
 ;; Package-Requires: ((emacs "29.1"))
 
 ;;; Commentary:
