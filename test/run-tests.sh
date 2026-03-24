@@ -73,6 +73,21 @@ else
 	((FAILURES++)) || true
 fi
 
+# --- Doom Emacs integration tests ---
+echo ""
+echo "--- Doom Emacs integration tests ---"
+if emacs --batch \
+	-L "$PROJECT_DIR" \
+	--eval "(setq treesit-extra-load-path '(\"$PROJECT_DIR/\"))" \
+	-l ert \
+	-l "$SCRIPT_DIR/test-doom.el" \
+	-f ert-run-tests-batch-and-exit 2>&1; then
+	echo "  PASSED"
+else
+	echo "  FAILED"
+	((FAILURES++)) || true
+fi
+
 # --- Sample file smoke test ---
 echo ""
 echo "--- Sample file smoke test ---"
