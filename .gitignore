@@ -1,0 +1,15 @@
+# Byte-compiled Emacs Lisp
+*.elc
+
+# Compiled tree-sitter grammar (platform-specific; build from source)
+libtree-sitter-kcl.so
+libtree-sitter-kcl.dylib
+libtree-sitter-kcl.dll
+
+# Emacs backup/auto-save files
+*~
+\#*\#
+.\#*
+
+# Package build artifacts
+dist/
