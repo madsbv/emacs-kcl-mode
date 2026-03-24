@@ -56,6 +56,23 @@ else
 	((FAILURES++)) || true
 fi
 
+# --- Command/feature tests ---
+echo ""
+echo "--- Command and feature tests ---"
+if emacs --batch \
+	-L "$PROJECT_DIR" \
+	--eval "(setq treesit-extra-load-path '(\"$PROJECT_DIR/\"))" \
+	-l ert \
+	-l kcl-mode \
+	-l kcl-ts-mode \
+	-l "$SCRIPT_DIR/test-commands.el" \
+	-f ert-run-tests-batch-and-exit 2>&1; then
+	echo "  PASSED"
+else
+	echo "  FAILED"
+	((FAILURES++)) || true
+fi
+
 # --- Sample file smoke test ---
 echo ""
 echo "--- Sample file smoke test ---"

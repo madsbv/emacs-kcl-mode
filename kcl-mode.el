@@ -21,6 +21,14 @@
 ;; - Comment support (# line comments)
 ;; - Basic indentation (4-space Python-like)
 ;; - Integration with lsp-mode and eglot for the KCL language server
+;; - `kcl-eval-buffer' with snapshot freeze/diff support
+;; - Compilation mode with KCL error regexp and ANSI color
+;; - CLI commands: lint, test, vet, mod init/add, goto-imports
+;; - Documentation lookup via `kcl-open-doc-at-point'
+;; - Tempo templates for schema, rule, mixin, protocol, etc.
+;; - Flymake backend using `kcl lint'
+;; - Transient menu for all commands
+;; - `which-function-mode' support
 ;;
 ;; Usage:
 ;;   (require 'kcl-mode)
@@ -30,6 +38,8 @@
 ;;; Code:
 
 (require 'rx)
+(require 'ansi-color)
+(require 'compile)
 
 ;;; Customization
 
@@ -56,6 +66,14 @@
 (defcustom kcl-format-on-save nil
   "If non-nil, format KCL buffers with `kcl fmt' before saving."
   :type 'boolean
+  :group 'kcl)
+
+(defcustom kcl-eval-output-format "yaml"
+  "Output format for `kcl-eval-buffer'.
+Supported values: \"yaml\", \"json\", \"toml\"."
+  :type '(choice (const "yaml")
+                 (const "json")
+                 (const "toml"))
   :group 'kcl)
 
 ;;; Syntax Table
@@ -370,9 +388,22 @@
 
 (defvar kcl-mode-map
   (let ((map (make-sparse-keymap)))
-    ;; Add useful key bindings
+    ;; Run / Eval
     (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
+    (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
+    (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
+    (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
+    ;; Tooling
     (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
+    (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
+    (define-key map (kbd "C-c C-t") #'kcl-test)
+    (define-key map (kbd "C-c C-v") #'kcl-vet)
+    ;; Project
+    (define-key map (kbd "C-c C-i") #'kcl-goto-imports)
+    ;; Documentation
+    (define-key map (kbd "C-c C-h") #'kcl-open-doc-at-point)
+    ;; Transient
+    (define-key map (kbd "C-c C-c") #'kcl-transient)
     map)
   "Keymap for `kcl-mode'.")
 
@@ -416,6 +447,530 @@ pick up the formatted version.  Preserves point position."
 Intended for use on `before-save-hook'."
   (when kcl-format-on-save
     (kcl-format-buffer)))
+
+;;; Project Root
+
+(defun kcl-project-root ()
+  "Return the KCL project root directory.
+Looks for `kcl.mod' in parent directories.  Returns nil if not found."
+  (when-let ((file (or (buffer-file-name)
+                       default-directory)))
+    (locate-dominating-file file "kcl.mod")))
+
+;;; Compilation Mode
+
+(defvar kcl-compilation-error-regexp
+  '(kcl " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)" 1 2 3)
+  "Compilation error regexp alist entry for KCL diagnostics.
+Matches lines like: --> /path/to/file.k:10:5")
+
+(defvar kcl-compilation-warning-regexp
+  '(kcl-warning "^warning\\[W[0-9]+\\]" nil nil nil 1)
+  "Compilation warning regexp alist entry for KCL warnings.
+Matches lines like: warning[W2001]: ...")
+
+(defvar kcl-compilation-error-type-regexp
+  '(kcl-error-type "^\\(?:error\\[E[0-9]+\\]\\|EvaluationError\\)" nil nil nil 2)
+  "Compilation error type regexp for KCL errors.
+Matches lines like: error[E1001]: ... or EvaluationError")
+
+(define-compilation-mode kcl-compilation-mode "KCL-Compile"
+  "Major mode for KCL compilation buffers.
+Supports ANSI colors and KCL-style error navigation."
+  (setq-local compilation-error-regexp-alist '(kcl))
+  (setq-local compilation-error-regexp-alist-alist
+              (list kcl-compilation-error-regexp))
+  ;; Enable ANSI color rendering
+  (add-hook 'compilation-filter-hook #'kcl--colorize-compilation nil t))
+
+(defun kcl--colorize-compilation ()
+  "Apply ANSI color codes in the compilation buffer."
+  (let ((inhibit-read-only t))
+    (ansi-color-apply-on-region compilation-filter-start (point))))
+
+(with-eval-after-load 'compile
+  (add-to-list 'compilation-error-regexp-alist-alist
+               kcl-compilation-error-regexp)
+  (add-to-list 'compilation-error-regexp-alist 'kcl))
+
+;;; which-function-mode support
+
+(defun kcl-mode--which-function ()
+  "Return the name of the current KCL definition at point.
+For use with `which-function-mode'."
+  (save-excursion
+    (end-of-line)
+    (when (re-search-backward
+           (rx line-start (* space)
+               (group (or "schema" "mixin" "protocol" "rule"))
+               (+ space)
+               (group (+ (any word ?_))))
+           nil t)
+      (let ((kind (match-string 1))
+            (name (match-string 2)))
+        (format "%s %s" kind name)))))
+
+;;; Eval with Snapshot Diff
+
+(defvar-local kcl--frozen-output nil
+  "Frozen snapshot of last `kcl-eval-freeze' output.")
+
+(defvar-local kcl--frozen-format nil
+  "Output format used when the snapshot was frozen.")
+
+(defun kcl-eval-buffer ()
+  "Evaluate the current KCL buffer and display output in *kcl-output*.
+Uses `kcl-eval-output-format' to determine the output format."
+  (interactive)
+  (let ((file (buffer-file-name)))
+    (unless file
+      (user-error "Buffer is not visiting a file"))
+    (save-buffer)
+    (let* ((fmt kcl-eval-output-format)
+           (cmd (format "%s run --format %s %s"
+                        (shell-quote-argument kcl-command)
+                        (shell-quote-argument fmt)
+                        (shell-quote-argument file)))
+           (output-buf (get-buffer-create "*kcl-output*"))
+           (exit-code nil))
+      (with-current-buffer output-buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)))
+      (setq exit-code
+            (call-process-shell-command cmd nil output-buf nil))
+      (with-current-buffer output-buf
+        (goto-char (point-min))
+        ;; Try to set an appropriate mode for the output
+        (cond
+         ((string= fmt "json")
+          (when (fboundp 'js-mode) (js-mode)))
+         ((string= fmt "yaml")
+          (if (fboundp 'yaml-mode)
+              (yaml-mode)
+            (when (fboundp 'yaml-ts-mode) (yaml-ts-mode))))
+         ((string= fmt "toml")
+          (when (fboundp 'toml-ts-mode) (toml-ts-mode))))
+        (setq buffer-read-only t))
+      (display-buffer output-buf
+                      '((display-buffer-reuse-window
+                         display-buffer-in-side-window)
+                        (side . right)
+                        (window-width . 0.4)))
+      (if (zerop exit-code)
+          (message "KCL eval completed (%s)" fmt)
+        (message "KCL eval failed (exit %d)" exit-code)))))
+
+(defun kcl-eval-freeze ()
+  "Save the current eval output as a frozen snapshot for later diffing."
+  (interactive)
+  (let ((output-buf (get-buffer "*kcl-output*")))
+    (unless output-buf
+      (user-error "No *kcl-output* buffer; run `kcl-eval-buffer' first"))
+    (let ((content (with-current-buffer output-buf
+                     (buffer-string))))
+      (setq kcl--frozen-output content)
+      (setq kcl--frozen-format kcl-eval-output-format)
+      (message "Snapshot frozen (%d bytes, %s format)"
+               (length kcl--frozen-output)
+               kcl--frozen-format))))
+
+(defun kcl-eval-diff ()
+  "Re-evaluate the buffer and diff against the frozen snapshot.
+Shows the diff in a `diff-mode' buffer."
+  (interactive)
+  (unless kcl--frozen-output
+    (user-error "No frozen snapshot; run `kcl-eval-freeze' first"))
+  (let ((file (buffer-file-name))
+        (frozen kcl--frozen-output)
+        (frozen-fmt kcl--frozen-format))
+    (unless file
+      (user-error "Buffer is not visiting a file"))
+    (save-buffer)
+    (let* ((fmt (or frozen-fmt kcl-eval-output-format))
+           (cmd (format "%s run --format %s %s"
+                        (shell-quote-argument kcl-command)
+                        (shell-quote-argument fmt)
+                        (shell-quote-argument file)))
+           (new-output (shell-command-to-string cmd))
+           (old-file (make-temp-file "kcl-frozen-" nil
+                                     (concat "." fmt)))
+           (new-file (make-temp-file "kcl-current-" nil
+                                     (concat "." fmt)))
+           (diff-buf (get-buffer-create "*kcl-diff*")))
+      (with-temp-file old-file (insert frozen))
+      (with-temp-file new-file (insert new-output))
+      (with-current-buffer diff-buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (call-process "diff" nil diff-buf nil "-u"
+                        "--label" "frozen" "--label" "current"
+                        old-file new-file)
+          (goto-char (point-min))
+          (diff-mode)
+          (setq buffer-read-only t)))
+      (delete-file old-file)
+      (delete-file new-file)
+      (if (zerop (buffer-size diff-buf))
+          (progn
+            (kill-buffer diff-buf)
+            (message "No differences from frozen snapshot"))
+        (display-buffer diff-buf)
+        (message "Differences found; see *kcl-diff* buffer")))))
+
+;;; CLI Commands
+
+(defun kcl-lint-buffer ()
+  "Lint the current KCL buffer using `kcl lint'."
+  (interactive)
+  (let ((file (buffer-file-name)))
+    (unless file
+      (user-error "Buffer is not visiting a file"))
+    (save-buffer)
+    (let ((default-directory (or (kcl-project-root)
+                                 (file-name-directory file))))
+      (compilation-start
+       (format "%s lint %s"
+               (shell-quote-argument kcl-command)
+               (shell-quote-argument file))
+       'kcl-compilation-mode))))
+
+(defun kcl-test ()
+  "Run `kcl test' on the current project or directory."
+  (interactive)
+  (let* ((root (kcl-project-root))
+         (dir (or root (and (buffer-file-name)
+                            (file-name-directory (buffer-file-name)))
+                  default-directory)))
+    (let ((default-directory dir))
+      (compilation-start
+       (format "%s test" (shell-quote-argument kcl-command))
+       'kcl-compilation-mode))))
+
+(defun kcl-vet (data-file &optional schema-name)
+  "Validate DATA-FILE against a KCL schema.
+When called interactively, prompts for the data file.
+Optional SCHEMA-NAME specifies which schema to validate against."
+  (interactive
+   (list (read-file-name "Data file to validate: " nil nil t)
+         (let ((s (read-string "Schema name (empty for default): ")))
+           (if (string-empty-p s) nil s))))
+  (let ((kcl-file (buffer-file-name)))
+    (unless kcl-file
+      (user-error "Buffer is not visiting a KCL file"))
+    (save-buffer)
+    (let ((cmd (format "%s vet %s %s %s"
+                       (shell-quote-argument kcl-command)
+                       (shell-quote-argument kcl-file)
+                       (shell-quote-argument (expand-file-name data-file))
+                       (if schema-name
+                           (format "--schema %s"
+                                   (shell-quote-argument schema-name))
+                         ""))))
+      (compilation-start cmd 'kcl-compilation-mode))))
+
+(defun kcl-mod-init ()
+  "Initialize a new KCL module in the current directory."
+  (interactive)
+  (let ((default-directory (or (and (buffer-file-name)
+                                    (file-name-directory (buffer-file-name)))
+                               default-directory)))
+    (compilation-start
+     (format "%s mod init" (shell-quote-argument kcl-command))
+     'kcl-compilation-mode)))
+
+(defun kcl-mod-add (package)
+  "Add PACKAGE dependency to the KCL module."
+  (interactive "sPackage to add (e.g., k8s): ")
+  (let ((default-directory (or (kcl-project-root)
+                               default-directory)))
+    (compilation-start
+     (format "%s mod add %s"
+             (shell-quote-argument kcl-command)
+             (shell-quote-argument package))
+     'kcl-compilation-mode)))
+
+(defun kcl-goto-imports ()
+  "Jump to the import section of the current buffer.
+If no imports exist, jump to the beginning of the buffer."
+  (interactive)
+  (push-mark)
+  (goto-char (point-min))
+  ;; Skip any leading comments or blank lines
+  (while (and (not (eobp))
+              (looking-at "^\\([ \t]*#\\|[ \t]*$\\)"))
+    (forward-line 1))
+  (if (looking-at "^import\\b")
+      (message "At import section")
+    (goto-char (point-min))
+    (message "No imports found; at beginning of file")))
+
+;;; Documentation
+
+(defvar kcl-doc--builtin-type-urls
+  '(("str" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#string")
+    ("int" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#int")
+    ("float" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#float")
+    ("bool" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#bool")
+    ("list" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#list")
+    ("dict" . "https://kcl-lang.io/docs/reference/lang/spec/datatypes#dict"))
+  "URL mappings for KCL built-in types.")
+
+(defvar kcl-doc--builtin-function-url
+  "https://kcl-lang.io/docs/reference/model/builtin#%s"
+  "URL template for KCL built-in functions.")
+
+(defvar kcl-doc--stdlib-modules
+  '("math" "net" "crypto" "base64" "json" "yaml" "regex"
+    "datetime" "units" "file" "manifests" "runtime" "template")
+  "KCL standard library module names.")
+
+(defvar kcl-doc--keyword-urls
+  '(("schema" . "https://kcl-lang.io/docs/reference/lang/tour#schema")
+    ("rule" . "https://kcl-lang.io/docs/reference/lang/tour#rule")
+    ("protocol" . "https://kcl-lang.io/docs/reference/lang/tour#protocol")
+    ("mixin" . "https://kcl-lang.io/docs/reference/lang/tour#mixin")
+    ("lambda" . "https://kcl-lang.io/docs/reference/lang/tour#lambda")
+    ("check" . "https://kcl-lang.io/docs/reference/lang/tour#check")
+    ("assert" . "https://kcl-lang.io/docs/reference/lang/tour#assert")
+    ("import" . "https://kcl-lang.io/docs/reference/lang/tour#import")
+    ("type" . "https://kcl-lang.io/docs/reference/lang/tour#type-alias")
+    ("if" . "https://kcl-lang.io/docs/reference/lang/tour#if-elif-else")
+    ("for" . "https://kcl-lang.io/docs/reference/lang/tour#comprehension")
+    ("in" . "https://kcl-lang.io/docs/reference/lang/tour#membership-operators"))
+  "URL mappings for KCL keywords.")
+
+(defun kcl-open-doc-at-point ()
+  "Open KCL documentation for the symbol at point in a browser."
+  (interactive)
+  (let ((symbol (thing-at-point 'symbol t)))
+    (unless symbol
+      (user-error "No symbol at point"))
+    (let ((url (kcl-doc--url-for symbol)))
+      (if url
+          (progn
+            (browse-url url)
+            (message "Opening docs for `%s'" symbol))
+        (let ((search-url (format "https://kcl-lang.io/search?q=%s" symbol)))
+          (browse-url search-url)
+          (message "No specific docs for `%s'; searching..." symbol))))))
+
+(defun kcl-doc--url-for (symbol)
+  "Return a documentation URL for SYMBOL, or nil if unknown."
+  (cond
+   ;; Built-in type
+   ((assoc symbol kcl-doc--builtin-type-urls)
+    (cdr (assoc symbol kcl-doc--builtin-type-urls)))
+   ;; Keyword
+   ((assoc symbol kcl-doc--keyword-urls)
+    (cdr (assoc symbol kcl-doc--keyword-urls)))
+   ;; Built-in function
+   ((member symbol kcl-mode--builtin-functions)
+    (format kcl-doc--builtin-function-url symbol))
+   ;; Standard library module (e.g., "math" from import math)
+   ((member symbol kcl-doc--stdlib-modules)
+    (format "https://kcl-lang.io/docs/reference/model/%s" symbol))
+   ;; Module.function (e.g., "math.log")
+   ((string-match "\\`\\([a-z_]+\\)\\.\\([a-z_]+\\)\\'" symbol)
+    (let ((mod (match-string 1 symbol))
+          (func (match-string 2 symbol)))
+      (when (member mod kcl-doc--stdlib-modules)
+        (format "https://kcl-lang.io/docs/reference/model/%s#%s" mod func))))
+   (t nil)))
+
+;;; Tempo Templates
+
+(require 'tempo)
+
+(defvar kcl-tempo-tags nil
+  "Tempo tags for KCL mode.")
+
+(tempo-define-template "kcl-schema"
+  '("schema " (p "Schema name: " name) ":" n>
+    (p "Docstring: " doc) n>
+    r> n>
+    "check:" n>
+    p)
+  "schema"
+  "Insert a KCL schema definition."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-rule"
+  '("rule " (p "Rule name: " name) ":" n>
+    (p "Docstring: " doc) n>
+    r> p)
+  "rule"
+  "Insert a KCL rule definition."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-mixin"
+  '("mixin " (p "Mixin name: " name) ":" n>
+    (p "Docstring: " doc) n>
+    r> p)
+  "mixin"
+  "Insert a KCL mixin definition."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-protocol"
+  '("protocol " (p "Protocol name: " name) ":" n>
+    r> p)
+  "protocol"
+  "Insert a KCL protocol definition."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-check"
+  '("check:" n>
+    (p "Constraint expression: " expr) > ", \"" (p "Error message: " msg) "\"" p)
+  "check"
+  "Insert a KCL check block."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-import"
+  '("import " (p "Module path: " module) p)
+  "import"
+  "Insert a KCL import statement."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-lambda"
+  '("lambda " (p "Parameters: " params) " {" n>
+    r> p n>
+    "}")
+  "lambda"
+  "Insert a KCL lambda expression."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-if"
+  '("if " (p "Condition: " cond) ":" n>
+    r> p)
+  "kclif"
+  "Insert a KCL if block."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-for"
+  '("for " (p "Variable: " var) " in " (p "Iterable: " iter) " {" n>
+    r> p n>
+    "}")
+  "for"
+  "Insert a KCL for comprehension."
+  'kcl-tempo-tags)
+
+(tempo-define-template "kcl-assert"
+  '("assert " (p "Condition: " cond) ", \"" (p "Message: " msg) "\"" p)
+  "assert"
+  "Insert a KCL assertion."
+  'kcl-tempo-tags)
+
+;;; Flymake Integration
+
+(defvar-local kcl--flymake-proc nil
+  "Current flymake process for KCL.")
+
+(defun kcl-flymake-backend (report-fn &rest _args)
+  "Flymake backend for KCL using `kcl lint'.
+REPORT-FN is the Flymake callback."
+  (when (process-live-p kcl--flymake-proc)
+    (kill-process kcl--flymake-proc))
+  (let* ((source (current-buffer))
+         (file (buffer-file-name)))
+    (unless file
+      (funcall report-fn nil)
+      (cl-return-from kcl-flymake-backend))
+    (save-buffer)
+    (setq kcl--flymake-proc
+          (make-process
+           :name "kcl-flymake"
+           :noquery t
+           :connection-type 'pipe
+           :buffer (generate-new-buffer " *kcl-flymake*")
+           :command (list kcl-command "lint" "--no_style" file)
+           :sentinel
+           (lambda (proc _event)
+             (when (memq (process-status proc) '(exit signal))
+               (unwind-protect
+                   (when (eq proc (buffer-local-value 'kcl--flymake-proc source))
+                     (with-current-buffer (process-buffer proc)
+                       (goto-char (point-min))
+                       (let ((diags nil)
+                             (source-file (buffer-file-name source)))
+                         (while (re-search-forward
+                                 " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)"
+                                 nil t)
+                           (let* ((diag-file (match-string 1))
+                                  (line (string-to-number (match-string 2)))
+                                  (col (string-to-number (match-string 3)))
+                                  ;; Look backward for error/warning type
+                                  (type (save-excursion
+                                          (if (re-search-backward
+                                               "^warning\\[W[0-9]+\\]" nil t)
+                                              :warning
+                                            :error)))
+                                  ;; Get the message from the line after -->
+                                  (msg (save-excursion
+                                         (forward-line 0)
+                                         (buffer-substring-no-properties
+                                          (point) (line-end-position)))))
+                             ;; Only report diagnostics for the source file
+                             (when (and source-file
+                                        (string= (expand-file-name diag-file)
+                                                 (expand-file-name source-file)))
+                               (with-current-buffer source
+                                 (save-excursion
+                                   (goto-char (point-min))
+                                   (forward-line (1- line))
+                                   (let* ((bol (point))
+                                          (eol (line-end-position))
+                                          (beg (min (+ bol (1- col)) eol))
+                                          (end (min (+ beg 1) eol)))
+                                     (push (flymake-make-diagnostic
+                                            source beg end type
+                                            (string-trim msg))
+                                           diags)))))))
+                         (funcall report-fn (nreverse diags)))))
+                 (kill-buffer (process-buffer proc)))))))))
+
+;;; Transient Menu
+
+(defun kcl-transient ()
+  "Show the KCL command menu.
+If `transient' is available, shows a transient popup.
+Otherwise, shows a simple `completing-read' menu."
+  (interactive)
+  (if (fboundp 'transient-define-prefix)
+      (call-interactively #'kcl-transient-menu)
+    ;; Fallback for when transient is not available
+    (let* ((commands '(("r - Run buffer" . kcl-run-buffer)
+                       ("e - Eval buffer" . kcl-eval-buffer)
+                       ("f - Format buffer" . kcl-format-buffer)
+                       ("l - Lint buffer" . kcl-lint-buffer)
+                       ("t - Test project" . kcl-test)
+                       ("v - Vet data file" . kcl-vet)
+                       ("s - Freeze snapshot" . kcl-eval-freeze)
+                       ("d - Diff snapshot" . kcl-eval-diff)
+                       ("i - Go to imports" . kcl-goto-imports)
+                       ("D - Doc at point" . kcl-open-doc-at-point)
+                       ("I - Mod init" . kcl-mod-init)
+                       ("a - Mod add" . kcl-mod-add)))
+           (choice (completing-read "KCL command: " commands nil t)))
+      (call-interactively (cdr (assoc choice commands))))))
+
+(with-eval-after-load 'transient
+  (transient-define-prefix kcl-transient-menu ()
+    "KCL commands."
+    ["Evaluate"
+     ("r" "Run buffer" kcl-run-buffer)
+     ("e" "Eval buffer" kcl-eval-buffer)
+     ("s" "Freeze snapshot" kcl-eval-freeze)
+     ("d" "Diff snapshot" kcl-eval-diff)]
+    ["Tooling"
+     ("f" "Format buffer" kcl-format-buffer)
+     ("l" "Lint buffer" kcl-lint-buffer)
+     ("t" "Test project" kcl-test)
+     ("v" "Vet data file" kcl-vet)]
+    ["Project"
+     ("I" "Mod init" kcl-mod-init)
+     ("a" "Mod add" kcl-mod-add)
+     ("i" "Go to imports" kcl-goto-imports)]
+    ["Documentation"
+     ("D" "Doc at point" kcl-open-doc-at-point)]))
 
 ;;; Mode Definition
 
@@ -482,6 +1037,15 @@ language for cloud-native configuration.
               (rx line-start (* space)
                   (or "schema" "mixin" "protocol" "rule" "type")
                   space))
+
+  ;; which-function-mode
+  (setq-local which-func-functions '(kcl-mode--which-function))
+
+  ;; Flymake
+  (add-hook 'flymake-diagnostic-functions #'kcl-flymake-backend nil t)
+
+  ;; Tempo
+  (tempo-use-tag-list 'kcl-tempo-tags)
 
   ;; Format on save
   (add-hook 'before-save-hook #'kcl--format-on-save nil t))

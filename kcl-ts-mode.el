@@ -217,7 +217,44 @@
     (when name-node
       (treesit-node-text name-node t))))
 
+(defun kcl-ts-mode--which-function ()
+  "Return the name of the current KCL definition at point.
+Uses tree-sitter to find the enclosing schema/rule/protocol."
+  (when-let* ((node (treesit-node-at (point)))
+              (def (treesit-parent-until
+                    node
+                    (lambda (n)
+                      (member (treesit-node-type n)
+                              '("schema_stmt" "rule_stmt"
+                                "protocol_stmt" "mixin_stmt"))))))
+    (let* ((type-str (treesit-node-type def))
+           (kind (car (split-string type-str "_")))
+           (name (kcl-ts-mode--defun-name def)))
+      (when name
+        (format "%s %s" kind name)))))
+
 ;;; Mode definition
+
+(defvar kcl-ts-mode-map
+  (let ((map (make-sparse-keymap)))
+    ;; Run / Eval
+    (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
+    (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
+    (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
+    (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
+    ;; Tooling
+    (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
+    (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
+    (define-key map (kbd "C-c C-t") #'kcl-test)
+    (define-key map (kbd "C-c C-v") #'kcl-vet)
+    ;; Project
+    (define-key map (kbd "C-c C-i") #'kcl-goto-imports)
+    ;; Documentation
+    (define-key map (kbd "C-c C-h") #'kcl-open-doc-at-point)
+    ;; Transient
+    (define-key map (kbd "C-c C-c") #'kcl-transient)
+    map)
+  "Keymap for `kcl-ts-mode'.")
 
 ;;;###autoload
 (define-derived-mode kcl-ts-mode prog-mode "KCL"
@@ -276,14 +313,16 @@ language for cloud-native configuration.
   ;; Format on save
   (add-hook 'before-save-hook #'kcl--format-on-save nil t)
 
-  (treesit-major-mode-setup))
+  ;; which-function-mode (tree-sitter based)
+  (setq-local which-func-functions '(kcl-ts-mode--which-function))
 
-(defvar kcl-ts-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-r") #'kcl-run-buffer)
-    (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
-    map)
-  "Keymap for `kcl-ts-mode'.")
+  ;; Flymake
+  (add-hook 'flymake-diagnostic-functions #'kcl-flymake-backend nil t)
+
+  ;; Tempo
+  (tempo-use-tag-list 'kcl-tempo-tags)
+
+  (treesit-major-mode-setup))
 
 ;;; Auto-mode integration
 ;; When tree-sitter grammar is available, prefer kcl-ts-mode over kcl-mode

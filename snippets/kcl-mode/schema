@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: schema
+# key: schema
+# --
+schema ${1:Name}:
+    """${2:Docstring}"""
+    ${3:attr}: ${4:str}
+
+    check:
+        $0

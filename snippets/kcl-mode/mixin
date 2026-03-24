@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: mixin
+# key: mixin
+# --
+mixin ${1:Name}:
+    """${2:Docstring}"""
+    $0

@@ -10,19 +10,41 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
   - Python-like indentation (4-space default)
   - Imenu for schema, rule, protocol, mixin, and type definitions
   - Outline support for code folding
-  - `C-c C-r` to run the current file with `kcl run`
-  - `C-c C-f` to format the current file with `kcl fmt`
+  - `which-function-mode` support
 
 - **`kcl-ts-mode`** -- Tree-sitter based major mode (Emacs 29.1+)
   - Accurate, parse-tree-based syntax highlighting with 16 feature categories
   - Structural indentation and navigation
   - Imenu and defun navigation via tree-sitter queries
-  - All the same keybindings as `kcl-mode`
+  - Tree-sitter-based `which-function-mode` support
+  - All the same keybindings and commands as `kcl-mode`
 
 - **LSP integration** -- Works with `kcl-language-server`
   - `kcl-lsp.el` for [lsp-mode](https://emacs-lsp.github.io/lsp-mode/) users
   - `kcl-eglot.el` for [eglot](https://github.com/joaotavora/eglot) users (built-in to Emacs 29+)
   - Supports: completion, hover, go-to-definition, find references, rename, formatting, diagnostics
+
+- **Eval with snapshot diff**
+  - `kcl-eval-buffer` -- evaluate and display output in a side buffer (yaml/json/toml)
+  - `kcl-eval-freeze` -- save the current output as a baseline snapshot
+  - `kcl-eval-diff` -- re-evaluate and diff against the frozen snapshot
+
+- **CLI commands**
+  - `kcl-lint-buffer` -- lint the current file
+  - `kcl-test` -- run tests in the current project
+  - `kcl-vet` -- validate data files against schemas
+  - `kcl-mod-init` / `kcl-mod-add` -- module management
+  - `kcl-goto-imports` -- jump to the import section
+
+- **Compilation mode** -- `kcl-compilation-mode` with KCL error regexp, ANSI color support, and clickable error locations
+
+- **Documentation lookup** -- `kcl-open-doc-at-point` opens kcl-lang.io docs for the symbol at point (built-in types, functions, stdlib modules, keywords)
+
+- **Templates** -- built-in tempo templates for schema, rule, mixin, protocol, check, import, lambda, if, for, assert; optional YASnippet snippets in `snippets/`
+
+- **Flymake integration** -- `kcl-flymake-backend` for live diagnostics via `kcl lint`
+
+- **Transient menu** -- `kcl-transient` popup grouping all commands (falls back to `completing-read` when transient is unavailable)
 
 - **Format on save** -- Optional automatic formatting via `kcl fmt`
 
@@ -128,10 +150,26 @@ Clone this repository and add it to your `load-path`:
 (add-hook 'kcl-ts-mode-hook #'eglot-ensure)
 ```
 
+### Flymake
+
+Flymake is automatically set up when `kcl-mode` or `kcl-ts-mode` activates. To enable it:
+
+```elisp
+(add-hook 'kcl-mode-hook #'flymake-mode)
+(add-hook 'kcl-ts-mode-hook #'flymake-mode)
+```
+
 ### Format on save
 
 ```elisp
 (setq kcl-format-on-save t)
+```
+
+### Eval output format
+
+```elisp
+;; Default is "yaml"; also supports "json" and "toml"
+(setq kcl-eval-output-format "json")
 ```
 
 ### Custom KCL binary path
@@ -149,6 +187,17 @@ Clone this repository and add it to your `load-path`:
 ;; For eglot:
 (setq kcl-eglot-server-command '("/path/to/kcl-language-server"))
 ```
+
+### YASnippet snippets
+
+If you use [YASnippet](https://github.com/joaotavora/yasnippet), add the bundled snippets directory:
+
+```elisp
+(setq yas-snippet-dirs (append yas-snippet-dirs
+                               '("/path/to/emacs-kcl-mode/snippets")))
+```
+
+Available snippets: `schema`, `rule`, `mixin`, `protocol`, `check`, `import`, `lambda`, `if`, `for`, `assert`.
 
 ## Doom Emacs
 
@@ -179,8 +228,22 @@ Add the following to your Doom Emacs configuration:
   ;; Evil localleader keybindings (SPC m)
   (map! :localleader
         :map kcl-mode-map
-        :desc "Run buffer"    "r" #'kcl-run-buffer
-        :desc "Format buffer" "f" #'kcl-format-buffer))
+        ;; Run / Eval
+        :desc "Run buffer"       "r" #'kcl-run-buffer
+        :desc "Eval buffer"      "e" #'kcl-eval-buffer
+        :desc "Freeze snapshot"  "s" #'kcl-eval-freeze
+        :desc "Diff snapshot"    "d" #'kcl-eval-diff
+        ;; Tooling
+        :desc "Format buffer"    "f" #'kcl-format-buffer
+        :desc "Lint buffer"      "l" #'kcl-lint-buffer
+        :desc "Test project"     "t" #'kcl-test
+        :desc "Vet data file"   "v" #'kcl-vet
+        ;; Project
+        :desc "Go to imports"    "i" #'kcl-goto-imports
+        ;; Docs
+        :desc "Doc at point"     "h" #'kcl-open-doc-at-point
+        ;; Menu
+        :desc "Command menu"     "m" #'kcl-transient))
 
 ;; Tree-sitter mode (Emacs 29+, Doom with +tree-sitter)
 (use-package! kcl-ts-mode
@@ -189,8 +252,17 @@ Add the following to your Doom Emacs configuration:
   :config
   (map! :localleader
         :map kcl-ts-mode-map
-        :desc "Run buffer"    "r" #'kcl-run-buffer
-        :desc "Format buffer" "f" #'kcl-format-buffer))
+        :desc "Run buffer"       "r" #'kcl-run-buffer
+        :desc "Eval buffer"      "e" #'kcl-eval-buffer
+        :desc "Freeze snapshot"  "s" #'kcl-eval-freeze
+        :desc "Diff snapshot"    "d" #'kcl-eval-diff
+        :desc "Format buffer"    "f" #'kcl-format-buffer
+        :desc "Lint buffer"      "l" #'kcl-lint-buffer
+        :desc "Test project"     "t" #'kcl-test
+        :desc "Vet data file"   "v" #'kcl-vet
+        :desc "Go to imports"    "i" #'kcl-goto-imports
+        :desc "Doc at point"     "h" #'kcl-open-doc-at-point
+        :desc "Command menu"     "m" #'kcl-transient))
 
 ;; LSP integration
 ;; Option A: lsp-mode (if you use the :tools lsp module)
@@ -207,17 +279,26 @@ Add the following to your Doom Emacs configuration:
 
 With LSP enabled, Doom's built-in `SPC c` bindings work automatically in KCL buffers:
 
-| Key       | Action                |
-|-----------|-----------------------|
-| `SPC m r` | Run file (`kcl run`)  |
-| `SPC m f` | Format (`kcl fmt`)    |
-| `SPC c d` | Go to definition      |
-| `SPC c D` | Find references       |
-| `SPC c a` | Code action           |
-| `SPC c r` | Rename symbol         |
-| `SPC c f` | Format (via LSP)      |
-| `SPC c k` | Documentation lookup  |
-| `SPC c x` | List diagnostics      |
+| Key       | Action                     |
+|-----------|----------------------------|
+| `SPC m r` | Run file (`kcl run`)       |
+| `SPC m e` | Eval buffer (side output)  |
+| `SPC m s` | Freeze output snapshot     |
+| `SPC m d` | Diff against snapshot      |
+| `SPC m f` | Format (`kcl fmt`)         |
+| `SPC m l` | Lint buffer                |
+| `SPC m t` | Test project               |
+| `SPC m v` | Vet data file              |
+| `SPC m i` | Go to imports              |
+| `SPC m h` | Doc at point               |
+| `SPC m m` | Command menu (transient)   |
+| `SPC c d` | Go to definition           |
+| `SPC c D` | Find references            |
+| `SPC c a` | Code action                |
+| `SPC c r` | Rename symbol              |
+| `SPC c f` | Format (via LSP)           |
+| `SPC c k` | Documentation lookup       |
+| `SPC c x` | List diagnostics           |
 
 If the language server is installed somewhere non-standard (e.g., via Nix):
 
@@ -243,10 +324,19 @@ If you manage your system with Nix and want the language server available withou
 
 ### Emacs
 
-| Key       | Command              | Description                      |
-|-----------|----------------------|----------------------------------|
-| `C-c C-r` | `kcl-run-buffer`     | Run the current file with `kcl`  |
-| `C-c C-f` | `kcl-format-buffer`  | Format the current file          |
+| Key       | Command                | Description                      |
+|-----------|------------------------|----------------------------------|
+| `C-c C-c` | `kcl-transient`        | Open KCL command menu            |
+| `C-c C-r` | `kcl-run-buffer`       | Run the current file with `kcl`  |
+| `C-c C-e` | `kcl-eval-buffer`      | Eval and show output in side buf |
+| `C-c C-s` | `kcl-eval-freeze`      | Freeze output as snapshot        |
+| `C-c C-d` | `kcl-eval-diff`        | Diff against frozen snapshot     |
+| `C-c C-f` | `kcl-format-buffer`    | Format the current file          |
+| `C-c C-l` | `kcl-lint-buffer`      | Lint the current file            |
+| `C-c C-t` | `kcl-test`             | Run tests in project             |
+| `C-c C-v` | `kcl-vet`              | Validate data file against schema|
+| `C-c C-i` | `kcl-goto-imports`     | Jump to import section           |
+| `C-c C-h` | `kcl-open-doc-at-point`| Open docs for symbol at point    |
 
 ### Evil (Doom Emacs)
 
@@ -257,12 +347,13 @@ LSP actions (`SPC c d`, `SPC c r`, etc.) work automatically when LSP is enabled.
 
 | Variable                    | Default                        | Description                               |
 |-----------------------------|--------------------------------|-------------------------------------------|
-| `kcl-indent-offset`        | `4`                            | Number of spaces per indentation level    |
-| `kcl-command`              | `"kcl"`                        | Path to the `kcl` CLI binary              |
-| `kcl-format-on-save`       | `nil`                          | Format buffer before saving               |
-| `kcl-lsp-server-command`   | `("kcl-language-server")`      | lsp-mode server command                   |
-| `kcl-lsp-auto-start`       | `nil`                          | Auto-start lsp-mode in KCL buffers        |
-| `kcl-eglot-server-command` | `("kcl-language-server")`      | eglot server command                      |
+| `kcl-indent-offset`         | `4`                            | Number of spaces per indentation level    |
+| `kcl-command`               | `"kcl"`                        | Path to the `kcl` CLI binary              |
+| `kcl-format-on-save`        | `nil`                          | Format buffer before saving               |
+| `kcl-eval-output-format`    | `"yaml"`                       | Eval output format (yaml/json/toml)       |
+| `kcl-lsp-server-command`    | `("kcl-language-server")`      | lsp-mode server command                   |
+| `kcl-lsp-auto-start`        | `nil`                          | Auto-start lsp-mode in KCL buffers        |
+| `kcl-eglot-server-command`  | `("kcl-language-server")`      | eglot server command                      |
 
 ## Running Tests
 
@@ -274,6 +365,7 @@ LSP actions (`SPC c d`, `SPC c r`, etc.) work automatically when LSP is enabled.
 emacs --batch -L . -l test/test-fontlock.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -l test/test-ts-mode.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -l test/test-lsp.el -f ert-run-tests-batch-and-exit
+emacs --batch -L . -l kcl-mode -l kcl-ts-mode -l test/test-commands.el -f ert-run-tests-batch-and-exit
 
 # Run live LSP tests (requires kcl-language-server)
 KCL_LANGUAGE_SERVER=/path/to/kcl-language-server \

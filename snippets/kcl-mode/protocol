@@ -1,0 +1,6 @@
+# -*- mode: snippet -*-
+# name: protocol
+# key: protocol
+# --
+protocol ${1:Name}:
+    ${2:attr}: ${3:str}$0

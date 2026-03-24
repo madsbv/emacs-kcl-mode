@@ -1,0 +1,6 @@
+# -*- mode: snippet -*-
+# name: check
+# key: check
+# --
+check:
+    ${1:expression}, "${2:error message}"$0
