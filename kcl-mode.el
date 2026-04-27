@@ -21,7 +21,11 @@
 ;; - Comment support (# line comments)
 ;; - Basic indentation (4-space Python-like)
 ;; - Integration with lsp-mode and eglot for the KCL language server
-;; - `kcl-eval-buffer' with snapshot freeze/diff support
+;; - `kcl-eval-buffer' with region eval, snapshot freeze/diff support
+;; - `kcl-switch-output-format' to cycle yaml/json/toml output
+;; - `kcl-live-preview-mode' for auto-eval on save (pseudo-REPL)
+;; - `kcl-format-buffer' using LSP when available, `kcl fmt' fallback
+;; - project.el integration: `kcl.mod' recognized as project root
 ;; - Compilation mode with KCL error regexp and ANSI color
 ;; - CLI commands: lint, test, vet, mod init/add, goto-imports
 ;; - Documentation lookup via `kcl-open-doc-at-point'
@@ -45,6 +49,11 @@
 (declare-function transient-define-prefix "transient" t)
 (declare-function kcl-transient-menu "kcl-mode")
 (defvar kcl-transient-menu)
+
+;; Declarations for optional LSP integrations
+(declare-function eglot-format-buffer "eglot")
+(declare-function lsp-format-buffer "lsp-mode")
+(defvar eglot--managed-mode)
 
 ;;; Customization
 
@@ -398,6 +407,8 @@ Supported values: \"yaml\", \"json\", \"toml\"."
   (define-key map (kbd "C-c C-e") #'kcl-eval-buffer)
   (define-key map (kbd "C-c C-s") #'kcl-eval-freeze)
   (define-key map (kbd "C-c C-d") #'kcl-eval-diff)
+  (define-key map (kbd "C-c C-o") #'kcl-switch-output-format)
+  (define-key map (kbd "C-c C-p") #'kcl-live-preview-mode)
   ;; Tooling
   (define-key map (kbd "C-c C-f") #'kcl-format-buffer)
   (define-key map (kbd "C-c C-l") #'kcl-lint-buffer)
@@ -430,36 +441,63 @@ Supported values: \"yaml\", \"json\", \"toml\"."
 (defvar-local kcl--formatting nil
   "Non-nil while `kcl-format-buffer' is running, to prevent recursion.")
 
-(defun kcl-format-buffer ()
-  "Format the current KCL buffer using `kcl fmt'.
-Saves the buffer, runs `kcl fmt' on the file, and replaces
-buffer contents with the formatted version.  Preserves point
-position."
-  (interactive)
-  (let ((file (buffer-file-name))
-        (pos (point)))
-    (if file
+(defun kcl--format-via-lsp ()
+  "Format buffer via LSP (eglot or lsp-mode).
+Returns non-nil if LSP formatting was invoked."
+  (cond
+   ((and (bound-and-true-p eglot--managed-mode)
+         (fboundp 'eglot-format-buffer))
+    (eglot-format-buffer)
+    t)
+   ((and (bound-and-true-p lsp-mode)
+         (fboundp 'lsp-format-buffer))
+    (lsp-format-buffer)
+    t)
+   (t nil)))
+
+(defun kcl--format-via-cli ()
+  "Format buffer using `kcl fmt' via a temp file.
+Writes buffer contents to a temp file, runs `kcl fmt' on it,
+reads the result back, and replaces buffer contents.  Does not
+save the original file.  Returns non-nil on success."
+  (let ((pos (point))
+        (temp-file (make-temp-file "kcl-fmt-" nil ".k")))
+    (unwind-protect
         (progn
-          (let ((kcl--formatting t))
-            (save-buffer))
+          ;; Write current buffer contents to temp file
+          (write-region (point-min) (point-max) temp-file nil 'silent)
           (let* ((cmd (format "%s fmt %s"
                               (shell-quote-argument kcl-command)
-                              (shell-quote-argument file)))
+                              (shell-quote-argument temp-file)))
                  (exit-code (call-process-shell-command cmd nil "*kcl-fmt*" nil)))
             (if (zerop exit-code)
                 (let ((tmp-buf (generate-new-buffer " *kcl-fmt-result*")))
                   (unwind-protect
                       (progn
                         (with-current-buffer tmp-buf
-                          (insert-file-contents file))
+                          (insert-file-contents temp-file))
                         (replace-buffer-contents tmp-buf)
-                        (set-buffer-modified-p nil)
                         (goto-char (min pos (point-max)))
-                        (message "Formatted %s" (file-name-nondirectory file)))
+                        (message "Formatted (kcl fmt)")
+                        t)
                     (kill-buffer tmp-buf)))
               (message "kcl fmt failed (exit %d); see *kcl-fmt* buffer"
-                       exit-code))))
-      (user-error "Buffer is not visiting a file"))))
+                       exit-code)
+              nil)))
+      (ignore-errors (delete-file temp-file)))))
+
+(defun kcl-format-buffer ()
+  "Format the current KCL buffer.
+When eglot or lsp-mode is active, delegates to the language server
+\(no file save required).  Otherwise, writes buffer contents to a
+temporary file, runs `kcl fmt', and replaces buffer contents.
+The original file is never force-saved by this command."
+  (interactive)
+  (unless (buffer-file-name)
+    (user-error "Buffer is not visiting a file"))
+  (let ((kcl--formatting t))
+    (or (kcl--format-via-lsp)
+        (kcl--format-via-cli))))
 
 (defun kcl--format-on-save ()
   "Run `kcl-format-buffer' if `kcl-format-on-save' is enabled.
@@ -476,6 +514,15 @@ Looks for `kcl.mod' in parent directories.  Returns nil if not found."
   (when-let ((file (or (buffer-file-name)
                        default-directory)))
     (locate-dominating-file file "kcl.mod")))
+
+;;; project.el Integration
+
+(defun kcl-project-try (dir)
+  "Return a project instance for DIR if it contains a `kcl.mod' file.
+Intended for `project-find-functions'.  Returns a `(transient . ROOT)'
+cons so that Emacs's built-in project commands work for KCL projects."
+  (when-let ((root (locate-dominating-file dir "kcl.mod")))
+    (cons 'transient root)))
 
 ;;; Compilation Mode
 
@@ -538,47 +585,97 @@ For use with `which-function-mode'."
 (defvar-local kcl--frozen-format nil
   "Output format used when the snapshot was frozen.")
 
+(defun kcl--buffer-imports ()
+  "Return all import lines from the current buffer as a string.
+Used to prepend imports when evaluating a region in isolation."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((imports ""))
+      (while (re-search-forward
+              (rx line-start (* space) "import" (+ space) (+ nonl)) nil t)
+        (setq imports (concat imports (match-string 0) "\n")))
+      imports)))
+
+(defun kcl--display-output-buffer (output-buf fmt)
+  "Display OUTPUT-BUF as a side window and set its major mode for FMT."
+  (with-current-buffer output-buf
+    (setq buffer-read-only nil)
+    (goto-char (point-min))
+    ;; Set mode after clearing read-only so mode setup can modify buffer freely
+    (cond
+     ((string= fmt "json")
+      (when (fboundp 'js-mode) (js-mode)))
+     ((string= fmt "yaml")
+      (if (fboundp 'yaml-mode)
+          (yaml-mode)
+        (when (fboundp 'yaml-ts-mode) (yaml-ts-mode))))
+     ((string= fmt "toml")
+      (when (fboundp 'toml-ts-mode) (toml-ts-mode))))
+    (setq buffer-read-only t))
+  (display-buffer output-buf
+                  '((display-buffer-reuse-window
+                     display-buffer-in-side-window)
+                    (side . right)
+                    (window-width . 0.4))))
+
 (defun kcl-eval-buffer ()
-  "Evaluate the current KCL buffer and display output in *kcl-output*.
-Uses `kcl-eval-output-format' to determine the output format."
+  "Evaluate the current KCL buffer (or active region) and display output.
+If a region is active, evaluates only the selected text, prepending
+any import statements from the buffer.  Otherwise evaluates the whole
+file.  Uses `kcl-eval-output-format' to determine the output format."
   (interactive)
-  (let ((file (buffer-file-name)))
-    (unless file
-      (user-error "Buffer is not visiting a file"))
-    (save-buffer)
-    (let* ((fmt kcl-eval-output-format)
-           (cmd (format "%s run --format %s %s"
-                        (shell-quote-argument kcl-command)
-                        (shell-quote-argument fmt)
-                        (shell-quote-argument file)))
-           (output-buf (get-buffer-create "*kcl-output*"))
-           (exit-code nil))
-      (with-current-buffer output-buf
-        (let ((inhibit-read-only t))
-          (erase-buffer)))
-      (setq exit-code
-            (call-process-shell-command cmd nil output-buf nil))
-      (with-current-buffer output-buf
-        (goto-char (point-min))
-        ;; Try to set an appropriate mode for the output
-        (cond
-         ((string= fmt "json")
-          (when (fboundp 'js-mode) (js-mode)))
-         ((string= fmt "yaml")
-          (if (fboundp 'yaml-mode)
-              (yaml-mode)
-            (when (fboundp 'yaml-ts-mode) (yaml-ts-mode))))
-         ((string= fmt "toml")
-          (when (fboundp 'toml-ts-mode) (toml-ts-mode))))
-        (setq buffer-read-only t))
-      (display-buffer output-buf
-                      '((display-buffer-reuse-window
-                         display-buffer-in-side-window)
-                        (side . right)
-                        (window-width . 0.4)))
-      (if (zerop exit-code)
-          (message "KCL eval completed (%s)" fmt)
-        (message "KCL eval failed (exit %d)" exit-code)))))
+  (unless (buffer-file-name)
+    (user-error "Buffer is not visiting a file"))
+  (let* ((fmt kcl-eval-output-format)
+         (output-buf (get-buffer-create "*kcl-output*"))
+         (exit-code nil))
+    (with-current-buffer output-buf
+      (setq buffer-read-only nil)
+      (erase-buffer))
+    (if (use-region-p)
+        ;; Region mode: write imports + region to temp file, eval that
+        (let* ((region-text (buffer-substring-no-properties
+                             (region-beginning) (region-end)))
+               (imports (kcl--buffer-imports))
+               (temp-file (make-temp-file "kcl-region-" nil ".k")))
+          (unwind-protect
+              (progn
+                (with-temp-file temp-file
+                  (insert imports)
+                  (unless (string-empty-p imports)
+                    (insert "\n"))
+                  (insert region-text))
+                (let ((cmd (format "%s run --format %s %s"
+                                   (shell-quote-argument kcl-command)
+                                   (shell-quote-argument fmt)
+                                   (shell-quote-argument temp-file))))
+                  (setq exit-code
+                        (call-process-shell-command cmd nil output-buf nil))))
+            (ignore-errors (delete-file temp-file))))
+      ;; Whole-buffer mode: save and eval the actual file
+      (save-buffer)
+      (let ((cmd (format "%s run --format %s %s"
+                         (shell-quote-argument kcl-command)
+                         (shell-quote-argument fmt)
+                         (shell-quote-argument (buffer-file-name)))))
+        (setq exit-code
+              (call-process-shell-command cmd nil output-buf nil))))
+    (kcl--display-output-buffer output-buf fmt)
+    (if (zerop exit-code)
+        (message "KCL eval completed (%s)" fmt)
+      (message "KCL eval failed (exit %d)" exit-code))))
+
+(defun kcl-switch-output-format ()
+  "Cycle `kcl-eval-output-format' through yaml, json, and toml.
+Re-evaluates the buffer immediately after switching."
+  (interactive)
+  (setq kcl-eval-output-format
+        (pcase kcl-eval-output-format
+          ("yaml" "json")
+          ("json" "toml")
+          (_      "yaml")))
+  (message "KCL output format: %s" kcl-eval-output-format)
+  (kcl-eval-buffer))
 
 (defun kcl-eval-freeze ()
   "Save the current eval output as a frozen snapshot for later diffing."
@@ -636,6 +733,22 @@ Shows the diff in a `diff-mode' buffer."
             (message "No differences from frozen snapshot"))
         (display-buffer diff-buf)
         (message "Differences found; see *kcl-diff* buffer")))))
+
+;;; Live Preview (Pseudo-REPL)
+
+(define-minor-mode kcl-live-preview-mode
+  "Minor mode that automatically evaluates the KCL buffer on each save.
+When enabled, `kcl-eval-buffer' is called after every save, keeping
+the `*kcl-output*' side window up to date as you edit.  This provides
+a live preview similar to Quokka.js in VS Code.
+
+The output format is controlled by `kcl-eval-output-format'; use
+`kcl-switch-output-format' (\\[kcl-switch-output-format]) to cycle formats."
+  :lighter " KCL-Live"
+  :group 'kcl
+  (if kcl-live-preview-mode
+      (add-hook 'after-save-hook #'kcl-eval-buffer nil t)
+    (remove-hook 'after-save-hook #'kcl-eval-buffer t)))
 
 ;;; CLI Commands
 
@@ -957,6 +1070,8 @@ Otherwise, shows a simple `completing-read' menu."
     ;; Fallback for when transient is not available
     (let* ((commands '(("r - Run buffer" . kcl-run-buffer)
                        ("e - Eval buffer" . kcl-eval-buffer)
+                       ("o - Switch output format" . kcl-switch-output-format)
+                       ("p - Toggle live preview" . kcl-live-preview-mode)
                        ("f - Format buffer" . kcl-format-buffer)
                        ("l - Lint buffer" . kcl-lint-buffer)
                        ("t - Test project" . kcl-test)
@@ -976,6 +1091,8 @@ Otherwise, shows a simple `completing-read' menu."
     ["Evaluate"
      ("r" "Run buffer" kcl-run-buffer)
      ("e" "Eval buffer" kcl-eval-buffer)
+     ("o" "Switch output format" kcl-switch-output-format)
+     ("p" "Toggle live preview" kcl-live-preview-mode)
      ("s" "Freeze snapshot" kcl-eval-freeze)
      ("d" "Diff snapshot" kcl-eval-diff)]
     ["Tooling"
@@ -1066,7 +1183,10 @@ language for cloud-native configuration.
   (tempo-use-tag-list 'kcl-tempo-tags)
 
   ;; Format on save
-  (add-hook 'before-save-hook #'kcl--format-on-save nil t))
+  (add-hook 'before-save-hook #'kcl--format-on-save nil t)
+
+  ;; project.el integration
+  (add-hook 'project-find-functions #'kcl-project-try nil t))
 
 (defun kcl-mode--syntactic-face-function (ppss)
   "Return face for syntax at PPSS.

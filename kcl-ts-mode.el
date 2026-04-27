@@ -296,6 +296,9 @@ language for cloud-native configuration.
   ;; Format on save
   (add-hook 'before-save-hook #'kcl--format-on-save nil t)
 
+  ;; project.el integration
+  (add-hook 'project-find-functions #'kcl-project-try nil t)
+
   ;; which-function-mode (tree-sitter based)
   (setq-local which-func-functions '(kcl-ts-mode--which-function))
 

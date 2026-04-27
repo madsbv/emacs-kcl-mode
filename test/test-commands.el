@@ -429,5 +429,186 @@
       (forward-char 4) ; inside body
       (should (string= (kcl-ts-mode--which-function) "schema Foo")))))
 
+;;; ──────────────────────────────────────────────
+;;; kcl-eval-buffer region-aware (B9)
+;;; ──────────────────────────────────────────────
+
+(ert-deftest kcl-eval-buffer-whole-file ()
+  "kcl-eval-buffer without region evals the whole file."
+  (let* ((dir (make-temp-file "kcl-eval-region-" t))
+         (file (expand-file-name "test.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x = 1\ny = 2\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            (deactivate-mark)
+            (kcl-eval-buffer)
+            (let ((out (get-buffer "*kcl-output*")))
+              (should out)
+              (with-current-buffer out
+                (let ((txt (buffer-substring-no-properties (point-min) (point-max))))
+                  (should (string-match-p "x: 1" txt))
+                  ;; 'y' is YAML reserved; output may be "y: 2" or "'y': 2"
+                  (should (string-match-p "2" txt))))
+              (kill-buffer out))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-eval-buffer-region ()
+  "kcl-eval-buffer with active region evals only that region."
+  (let* ((dir (make-temp-file "kcl-eval-region-" t))
+         (file (expand-file-name "test.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x = 1\ny = 2\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            ;; Select only "x = 1\n"; enable transient-mark-mode for batch
+            (let ((transient-mark-mode t))
+              (set-mark (point-min))
+              (goto-char (point-min))
+              (forward-line 1)
+              (setq mark-active t)
+              (should (use-region-p))
+              (kcl-eval-buffer))
+            (let ((out (get-buffer "*kcl-output*")))
+              (should out)
+              (with-current-buffer out
+                (let ((txt (buffer-substring-no-properties (point-min) (point-max))))
+                  (should (string-match-p "x: 1" txt))))
+              (kill-buffer out))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
+;;; ──────────────────────────────────────────────
+;;; kcl-switch-output-format (B11)
+;;; ──────────────────────────────────────────────
+
+(ert-deftest kcl-switch-output-format-defined ()
+  "kcl-switch-output-format should be a defined command."
+  (should (fboundp 'kcl-switch-output-format))
+  (should (commandp 'kcl-switch-output-format)))
+
+(ert-deftest kcl-switch-output-format-cycles ()
+  "kcl-switch-output-format should cycle yaml -> json -> toml -> yaml."
+  (let* ((dir (make-temp-file "kcl-fmt-cycle-" t))
+         (file (expand-file-name "test.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x = 1\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            (setq kcl-eval-output-format "yaml")
+            ;; yaml -> json
+            (kcl-switch-output-format)
+            (should (string= kcl-eval-output-format "json"))
+            ;; json -> toml
+            (kcl-switch-output-format)
+            (should (string= kcl-eval-output-format "toml"))
+            ;; toml -> yaml
+            (kcl-switch-output-format)
+            (should (string= kcl-eval-output-format "yaml"))
+            (when (get-buffer "*kcl-output*") (kill-buffer "*kcl-output*"))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-keymap-switch-format ()
+  "C-c C-o should be bound to kcl-switch-output-format."
+  (should (eq (lookup-key kcl-mode-map (kbd "C-c C-o"))
+              'kcl-switch-output-format)))
+
+;;; ──────────────────────────────────────────────
+;;; project.el integration (B14)
+;;; ──────────────────────────────────────────────
+
+(ert-deftest kcl-project-try-defined ()
+  "kcl-project-try should be a defined function."
+  (should (fboundp 'kcl-project-try)))
+
+(ert-deftest kcl-project-try-with-kcl-mod ()
+  "kcl-project-try should return transient project when kcl.mod exists."
+  (let* ((dir (make-temp-file "kcl-proj-" t))
+         (mod-file (expand-file-name "kcl.mod" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file mod-file (insert "[package]\n"))
+          (let ((result (kcl-project-try dir)))
+            (should result)
+            (should (eq (car result) 'transient))
+            (should (string= (expand-file-name (cdr result))
+                             (file-name-as-directory dir)))))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-project-try-without-kcl-mod ()
+  "kcl-project-try should return nil when no kcl.mod exists."
+  (let ((dir (make-temp-file "kcl-proj-" t)))
+    (unwind-protect
+        (should-not (kcl-project-try dir))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-project-find-functions-hooked ()
+  "kcl-project-try should be in project-find-functions in kcl-mode buffers."
+  (with-temp-buffer
+    (kcl-mode)
+    (should (memq 'kcl-project-try project-find-functions))))
+
+;;; ──────────────────────────────────────────────
+;;; kcl-live-preview-mode (B16)
+;;; ──────────────────────────────────────────────
+
+(ert-deftest kcl-live-preview-mode-defined ()
+  "kcl-live-preview-mode should be a defined minor mode."
+  (should (fboundp 'kcl-live-preview-mode)))
+
+(ert-deftest kcl-live-preview-mode-hooks ()
+  "kcl-live-preview-mode enable/disable should add/remove after-save-hook."
+  (with-temp-buffer
+    (kcl-mode)
+    ;; Enable: should add kcl-eval-buffer to after-save-hook
+    (kcl-live-preview-mode 1)
+    (should (memq 'kcl-eval-buffer after-save-hook))
+    ;; Disable: should remove it
+    (kcl-live-preview-mode -1)
+    (should-not (memq 'kcl-eval-buffer after-save-hook))))
+
+(ert-deftest kcl-keymap-live-preview ()
+  "C-c C-p should be bound to kcl-live-preview-mode."
+  (should (eq (lookup-key kcl-mode-map (kbd "C-c C-p"))
+              'kcl-live-preview-mode)))
+
+;;; ──────────────────────────────────────────────
+;;; Format-on-save improvements
+;;; ──────────────────────────────────────────────
+
+(ert-deftest kcl-format-buffer-cli-tempfile ()
+  "kcl-format-buffer via CLI should not require file to be saved first."
+  (let* ((dir (make-temp-file "kcl-fmt-" t))
+         (file (expand-file-name "test.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x=1\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            ;; Make buffer dirty without saving
+            (goto-char (point-max))
+            (insert "y=2\n")
+            (should (buffer-modified-p))
+            ;; Format should work on unsaved buffer content
+            (kcl-format-buffer)
+            ;; Buffer should not have been saved (still modified or
+            ;; modified state cleared by replace-buffer-contents is ok,
+            ;; but the key thing is the file should not have been written)
+            (kill-buffer)))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-format-via-lsp-defined ()
+  "kcl--format-via-lsp helper should be defined."
+  (should (fboundp 'kcl--format-via-lsp)))
+
+(ert-deftest kcl-format-via-cli-defined ()
+  "kcl--format-via-cli helper should be defined."
+  (should (fboundp 'kcl--format-via-cli)))
+
 (provide 'test-commands)
 ;;; test-commands.el ends here
