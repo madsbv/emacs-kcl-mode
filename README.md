@@ -33,7 +33,8 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
   - `kcl-lint-buffer` -- lint the current file
   - `kcl-test` -- run tests in the current project
   - `kcl-vet` -- validate data files against schemas
-  - `kcl-mod-init` / `kcl-mod-add` -- module management
+  - `kcl-mod-init` / `kcl-mod-add` / `kcl-mod-update` / `kcl-mod-graph` -- module management
+  - `kcl-import-add` -- insert an import in the import section
   - `kcl-goto-imports` -- jump to the import section
 
 - **Compilation mode** -- `kcl-compilation-mode` with KCL error regexp, ANSI color support, and clickable error locations
@@ -351,9 +352,9 @@ LSP actions (`SPC c d`, `SPC c r`, etc.) work automatically when LSP is enabled.
 | `kcl-command`               | `"kcl"`                        | Path to the `kcl` CLI binary              |
 | `kcl-format-on-save`        | `nil`                          | Format buffer before saving               |
 | `kcl-eval-output-format`    | `"yaml"`                       | Eval output format (yaml/json/toml)       |
-| `kcl-lsp-server-command`    | `("kcl-language-server")`      | lsp-mode server command                   |
+| `kcl-lsp-server-command`    | `nil`                          | lsp-mode server override                  |
 | `kcl-lsp-auto-start`        | `nil`                          | Auto-start lsp-mode in KCL buffers        |
-| `kcl-eglot-server-command`  | `("kcl-language-server")`      | eglot server command                      |
+| `kcl-eglot-server-command`  | `nil`                          | eglot server override                     |
 
 ## Running Tests
 

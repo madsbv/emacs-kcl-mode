@@ -4,6 +4,7 @@
 ;; CLI commands, documentation lookup, tempo templates, flymake, transient
 
 (require 'ert)
+(require 'cl-lib)
 (require 'kcl-mode)
 
 ;;; ──────────────────────────────────────────────
@@ -230,6 +231,15 @@
     (kcl-goto-imports)
     (should (looking-at "import os"))))
 
+(ert-deftest kcl-goto-imports-finds-later-imports ()
+  "kcl-goto-imports should find imports after a module docstring."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "\"\"\"module docs mentioning import fake\"\"\"\n\nimport math\n")
+    (goto-char (point-max))
+    (kcl-goto-imports)
+    (should (looking-at "import math"))))
+
 (ert-deftest kcl-lint-valid-file ()
   "kcl-lint-buffer should succeed on a valid file."
   (let* ((dir (make-temp-file "kcl-lint-" t))
@@ -261,6 +271,77 @@
 (ert-deftest kcl-mod-add-command-defined ()
   "kcl-mod-add should be an interactive command."
   (should (commandp 'kcl-mod-add)))
+
+(ert-deftest kcl-mod-update-command-defined ()
+  "kcl-mod-update should be an interactive command."
+  (should (commandp 'kcl-mod-update)))
+
+(ert-deftest kcl-mod-graph-command-defined ()
+  "kcl-mod-graph should be an interactive command."
+  (should (commandp 'kcl-mod-graph)))
+
+(ert-deftest kcl-mod-update-builds-command ()
+  "kcl-mod-update should run kcl mod update in the project root."
+  (let* ((dir (make-temp-file "kcl-mod-update-" t))
+         (captured nil))
+    (unwind-protect
+        (let ((default-directory dir)
+              (kcl-command "kcl"))
+          (cl-letf (((symbol-function 'compilation-start)
+                     (lambda (cmd mode)
+                       (setq captured (list cmd mode default-directory)))))
+            (kcl-mod-update "pkg")))
+      (delete-directory dir t))
+    (should (equal (nth 0 captured) "kcl mod update pkg"))
+    (should (eq (nth 1 captured) 'kcl-compilation-mode))
+    (should (string= (nth 2 captured) dir))))
+
+(ert-deftest kcl-mod-graph-builds-command ()
+  "kcl-mod-graph should run kcl mod graph in the project root."
+  (let* ((dir (make-temp-file "kcl-mod-graph-" t))
+         (captured nil))
+    (unwind-protect
+        (let ((default-directory dir)
+              (kcl-command "kcl"))
+          (cl-letf (((symbol-function 'compilation-start)
+                     (lambda (cmd mode)
+                       (setq captured (list cmd mode default-directory)))))
+            (kcl-mod-graph)))
+      (delete-directory dir t))
+    (should (equal (nth 0 captured) "kcl mod graph"))
+    (should (eq (nth 1 captured) 'kcl-compilation-mode))
+    (should (string= (nth 2 captured) dir))))
+
+(ert-deftest kcl-import-add-command-defined ()
+  "kcl-import-add should be an interactive command."
+  (should (commandp 'kcl-import-add)))
+
+(ert-deftest kcl-import-add-inserts-after-header ()
+  "kcl-import-add should insert imports after leading comments."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "# header\n\nschema Foo:\n    x: int\n")
+    (kcl-import-add "math")
+    (should (string= (buffer-string)
+                     "# header\n\nimport math\n\nschema Foo:\n    x: int\n"))))
+
+(ert-deftest kcl-import-add-appends-to-import-block ()
+  "kcl-import-add should append to an existing import block."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "import math\n\nschema Foo:\n    x: int\n")
+    (kcl-import-add "json" "j")
+    (should (string= (buffer-string)
+                     "import math\nimport json as j\n\nschema Foo:\n    x: int\n"))))
+
+(ert-deftest kcl-import-add-skips-duplicates ()
+  "kcl-import-add should not duplicate exact imports."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "import math\n\nschema Foo:\n    x: int\n")
+    (kcl-import-add "math")
+    (should (string= (buffer-string)
+                     "import math\n\nschema Foo:\n    x: int\n"))))
 
 ;;; ──────────────────────────────────────────────
 ;;; Documentation

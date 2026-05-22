@@ -27,7 +27,7 @@
 ;; - `kcl-format-buffer' using LSP when available, `kcl fmt' fallback
 ;; - project.el integration: `kcl.mod' recognized as project root
 ;; - Compilation mode with KCL error regexp and ANSI color
-;; - CLI commands: lint, test, vet, mod init/add, goto-imports
+;; - CLI commands: lint, test, vet, mod init/add/update/graph, imports
 ;; - Documentation lookup via `kcl-open-doc-at-point'
 ;; - Tempo templates for schema, rule, mixin, protocol, etc.
 ;; - Flymake backend using `kcl lint'
@@ -53,6 +53,7 @@
 ;; Declarations for optional LSP integrations
 (declare-function eglot-format-buffer "eglot")
 (declare-function lsp-format-buffer "lsp-mode")
+(declare-function treesit-ready-p "treesit.c")
 (defvar eglot--managed-mode)
 
 ;;; Customization
@@ -518,7 +519,7 @@ Looks for `kcl.mod' in parent directories.  Returns nil if not found."
 ;;; project.el Integration
 
 (defun kcl-project-try (dir)
-  "Return a project instance for DIR if it contains a `kcl.mod' file.
+  "Return a project instance for DIR when `kcl.mod' exists above it.
 Intended for `project-find-functions'.  Returns a `(transient . ROOT)'
 cons so that Emacs's built-in project commands work for KCL projects."
   (when-let ((root (locate-dominating-file dir "kcl.mod")))
@@ -585,6 +586,11 @@ For use with `which-function-mode'."
 (defvar-local kcl--frozen-format nil
   "Output format used when the snapshot was frozen.")
 
+(defun kcl--treesit-language-ready-p (language)
+  "Return non-nil when tree-sitter LANGUAGE is available."
+  (and (fboundp 'treesit-ready-p)
+       (treesit-ready-p language t)))
+
 (defun kcl--buffer-imports ()
   "Return all import lines from the current buffer as a string.
 Used to prepend imports when evaluating a region in isolation."
@@ -608,9 +614,13 @@ Used to prepend imports when evaluating a region in isolation."
      ((string= fmt "yaml")
       (if (fboundp 'yaml-mode)
           (yaml-mode)
-        (when (fboundp 'yaml-ts-mode) (yaml-ts-mode))))
+        (when (and (fboundp 'yaml-ts-mode)
+                   (kcl--treesit-language-ready-p 'yaml))
+          (yaml-ts-mode))))
      ((string= fmt "toml")
-      (when (fboundp 'toml-ts-mode) (toml-ts-mode))))
+      (when (and (fboundp 'toml-ts-mode)
+                 (kcl--treesit-language-ready-p 'toml))
+        (toml-ts-mode))))
     (setq buffer-read-only t))
   (display-buffer output-buf
                   '((display-buffer-reuse-window
@@ -814,6 +824,8 @@ Optional SCHEMA-NAME specifies which schema to validate against."
 (defun kcl-mod-add (package)
   "Add PACKAGE dependency to the KCL module."
   (interactive "sPackage to add (e.g., k8s): ")
+  (when (string-empty-p package)
+    (user-error "Package name cannot be empty"))
   (let ((default-directory (or (kcl-project-root)
                                default-directory)))
     (compilation-start
@@ -822,17 +834,95 @@ Optional SCHEMA-NAME specifies which schema to validate against."
              (shell-quote-argument package))
      'kcl-compilation-mode)))
 
+(defun kcl-mod-update (&optional package)
+  "Update KCL module dependencies.
+When PACKAGE is non-nil and non-empty, update only that package.
+Otherwise update all dependencies in the current KCL module."
+  (interactive
+   (list (let ((s (read-string "Package to update (empty for all): ")))
+           (unless (string-empty-p s) s))))
+  (let ((default-directory (or (kcl-project-root)
+                               default-directory))
+        (cmd (format "%s mod update" (shell-quote-argument kcl-command))))
+    (when (and package (not (string-empty-p package)))
+      (setq cmd (format "%s %s" cmd (shell-quote-argument package))))
+    (compilation-start cmd 'kcl-compilation-mode)))
+
+(defun kcl-mod-graph ()
+  "Show the KCL module dependency graph."
+  (interactive)
+  (let ((default-directory (or (kcl-project-root)
+                               default-directory)))
+    (compilation-start
+     (format "%s mod graph" (shell-quote-argument kcl-command))
+     'kcl-compilation-mode)))
+
+(defun kcl--import-line (module alias)
+  "Return a KCL import line for MODULE and optional ALIAS."
+  (if (and alias (not (string-empty-p alias)))
+      (format "import %s as %s" module alias)
+    (format "import %s" module)))
+
+(defun kcl--looking-at-import-p ()
+  "Return non-nil when point is at a real KCL import statement."
+  (and (looking-at "^[ \t]*import\\b")
+       (let ((ppss (syntax-ppss)))
+         (not (or (nth 3 ppss) (nth 4 ppss))))))
+
+(defun kcl--goto-first-import ()
+  "Move point to the first real import statement and return non-nil."
+  (goto-char (point-min))
+  (let ((found nil))
+    (while (and (not found)
+                (re-search-forward "^[ \t]*import\\b" nil t))
+      (beginning-of-line)
+      (if (kcl--looking-at-import-p)
+          (setq found t)
+        (forward-line 1)))
+    found))
+
+(defun kcl--import-insertion-point ()
+  "Return the buffer position where a new import should be inserted."
+  (save-excursion
+    (goto-char (point-min))
+    (while (and (not (eobp))
+                (looking-at "^[ \t]*\\(?:#.*\\)?$"))
+      (forward-line 1))
+    (if (kcl--looking-at-import-p)
+        (progn
+          (while (and (not (eobp))
+                      (kcl--looking-at-import-p))
+            (forward-line 1))
+          (point))
+      (point))))
+
+(defun kcl-import-add (module &optional alias)
+  "Add an import for MODULE and optional ALIAS to the current buffer."
+  (interactive
+   (let ((module (read-string "Module to import: ")))
+     (list module
+          (let ((alias (read-string "Alias (empty for none): ")))
+            (unless (string-empty-p alias) alias)))))
+  (when (string-empty-p module)
+    (user-error "Module name cannot be empty"))
+  (let ((line (kcl--import-line module alias)))
+    (save-excursion
+      (goto-char (point-min))
+      (if (re-search-forward
+           (concat "^[ \t]*" (regexp-quote line) "[ \t]*$") nil t)
+          (message "Import already present: %s" line)
+        (goto-char (kcl--import-insertion-point))
+        (insert line "\n")
+        (unless (or (eobp) (looking-at "^[ \t]*$"))
+          (insert "\n"))
+        (message "Added import: %s" line)))))
+
 (defun kcl-goto-imports ()
   "Jump to the import section of the current buffer.
 If no imports exist, jump to the beginning of the buffer."
   (interactive)
   (push-mark)
-  (goto-char (point-min))
-  ;; Skip any leading comments or blank lines
-  (while (and (not (eobp))
-              (looking-at "^\\([ \t]*#\\|[ \t]*$\\)"))
-    (forward-line 1))
-  (if (looking-at "^import\\b")
+  (if (kcl--goto-first-import)
       (message "At import section")
     (goto-char (point-min))
     (message "No imports found; at beginning of file")))
@@ -1080,8 +1170,11 @@ Otherwise, shows a simple `completing-read' menu."
                        ("d - Diff snapshot" . kcl-eval-diff)
                        ("i - Go to imports" . kcl-goto-imports)
                        ("D - Doc at point" . kcl-open-doc-at-point)
+                       ("m - Add import" . kcl-import-add)
                        ("I - Mod init" . kcl-mod-init)
-                       ("a - Mod add" . kcl-mod-add)))
+                       ("a - Mod add" . kcl-mod-add)
+                       ("u - Mod update" . kcl-mod-update)
+                       ("g - Mod graph" . kcl-mod-graph)))
            (choice (completing-read "KCL command: " commands nil t)))
       (call-interactively (cdr (assoc choice commands))))))
 
@@ -1103,6 +1196,9 @@ Otherwise, shows a simple `completing-read' menu."
     ["Project"
      ("I" "Mod init" kcl-mod-init)
      ("a" "Mod add" kcl-mod-add)
+     ("u" "Mod update" kcl-mod-update)
+     ("g" "Mod graph" kcl-mod-graph)
+     ("m" "Add import" kcl-import-add)
      ("i" "Go to imports" kcl-goto-imports)]
     ["Documentation"
      ("D" "Doc at point" kcl-open-doc-at-point)]))
