@@ -11,7 +11,8 @@
 (require 'imenu)
 
 (defvar kcl-test-numaflow-dir
-  "/home/mbv/workspace/github/kcl-lang/kcl-numaflow/numaflow/v1alpha1/"
+  (or (getenv "KCL_NUMAFLOW_DIR")
+      "/home/mbv/workspace/github/kcl-lang/kcl-numaflow/numaflow/v1alpha1/")
   "Directory containing numaflow KCL files.")
 
 (defvar kcl-test-numaflow-files nil
@@ -88,10 +89,11 @@
 ;;; kcl-ts-mode integration tests
 
 (setq treesit-extra-load-path
-      (list (file-name-directory
-             (directory-file-name
-              (file-name-directory
-               (or load-file-name buffer-file-name))))))
+      (list (or (getenv "KCL_TREE_SITTER_LOAD_PATH")
+                (file-name-directory
+                 (directory-file-name
+                  (file-name-directory
+                   (or load-file-name buffer-file-name)))))))
 
 (when (treesit-language-available-p 'kcl)
   (require 'kcl-ts-mode)

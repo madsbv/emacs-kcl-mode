@@ -121,6 +121,8 @@ Returns the eglot server object, or nil if setup fails."
   (require 'project)
   ;; Create temp project with git init
   (setq kcl-test--lsp-project-dir (make-temp-file "kcl-lsp-test" t))
+  (setq project-list-file
+        (expand-file-name "projects" kcl-test--lsp-project-dir))
   (setq kcl-test--lsp-test-file
         (expand-file-name "test.k" kcl-test--lsp-project-dir))
   ;; git init so project.el can find it

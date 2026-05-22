@@ -1,4 +1,4 @@
-.PHONY: all byte-compile lint checkdoc test clean
+.PHONY: all byte-compile lint checkdoc test nix-test flake-check clean
 
 EMACS ?= emacs
 EMACS_BATCH = $(EMACS) --batch -L .
@@ -46,7 +46,15 @@ lint: checkdoc
 
 ## Run the full ERT test suite
 test:
-	@bash test/run-tests.sh
+	@EMACS="$(EMACS)" bash test/run-tests.sh
+
+## Run the full validation suite inside the Nix dev shell
+nix-test:
+	@nix develop --command make all
+
+## Run flake checks
+flake-check:
+	@nix flake check --print-build-logs
 
 ## Remove byte-compiled files
 clean:

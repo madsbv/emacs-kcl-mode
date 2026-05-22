@@ -13,12 +13,13 @@
 (require 'ert)
 (require 'treesit)
 
-;; Set up grammar load path
+;; Set up grammar load path.
 (setq treesit-extra-load-path
-      (list (file-name-directory
-             (directory-file-name
-              (file-name-directory
-               (or load-file-name buffer-file-name))))))
+      (list (or (getenv "KCL_TREE_SITTER_LOAD_PATH")
+                (file-name-directory
+                 (directory-file-name
+                  (file-name-directory
+                   (or load-file-name buffer-file-name)))))))
 
 (require 'kcl-ts-mode)
 

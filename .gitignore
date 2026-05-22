@@ -13,3 +13,5 @@ libtree-sitter-kcl.dll
 
 # Package build artifacts
 dist/
+result
+result-*
