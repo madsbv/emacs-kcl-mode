@@ -359,8 +359,24 @@ LSP actions (`SPC c d`, `SPC c r`, etc.) work automatically when LSP is enabled.
 ## Running Tests
 
 ```sh
-# Run all tests (requires kcl CLI and tree-sitter grammar)
+# Reproducible full validation with Nix
+nix flake check --print-build-logs
+
+# Or enter the dev shell and run the same local target
+nix develop
+make all
+
+# Run all local validation with tools from PATH
+make all
+
+# Run tests only (requires kcl CLI and tree-sitter grammar)
 ./test/run-tests.sh
+
+# Override tool and fixture locations when needed
+EMACS=/path/to/emacs \
+KCL_TREE_SITTER_LOAD_PATH=/path/to/tree-sitter-libs \
+KCL_NUMAFLOW_DIR=/path/to/kcl-numaflow/numaflow/v1alpha1 \
+  ./test/run-tests.sh
 
 # Run specific test files
 emacs --batch -L . -l test/test-fontlock.el -f ert-run-tests-batch-and-exit
