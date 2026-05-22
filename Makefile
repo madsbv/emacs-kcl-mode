@@ -3,7 +3,7 @@
 EMACS ?= emacs
 EMACS_BATCH = $(EMACS) --batch -L .
 
-EL_FILES = kcl-mode.el kcl-ts-mode.el kcl-lsp.el kcl-eglot.el
+EL_FILES = kcl-mode.el kcl-ts-mode.el kcl-lsp.el kcl-eglot.el kcl-flycheck.el ob-kcl.el
 ELC_FILES = $(EL_FILES:.el=.elc)
 
 all: byte-compile lint test

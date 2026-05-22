@@ -91,6 +91,21 @@ else
 	((FAILURES++)) || true
 fi
 
+# --- Optional integration tests ---
+echo ""
+echo "--- Optional integration tests ---"
+if "$EMACS" --batch \
+	-L "$PROJECT_DIR" \
+	--eval "(setq treesit-extra-load-path '(\"$KCL_TREE_SITTER_LOAD_PATH\"))" \
+	-l ert \
+	-l "$SCRIPT_DIR/test-optional.el" \
+	-f ert-run-tests-batch-and-exit 2>&1; then
+	echo "  PASSED"
+else
+	echo "  FAILED"
+	((FAILURES++)) || true
+fi
+
 # --- Sample file smoke test ---
 echo ""
 echo "--- Sample file smoke test ---"
