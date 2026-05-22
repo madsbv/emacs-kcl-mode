@@ -244,6 +244,10 @@
   "Test that SI-suffixed number (m) is fontified."
   (should (kcl-test--has-face "x = 500m" "500m" 'font-lock-constant-face)))
 
+(ert-deftest kcl-fontlock-si-no-identifier-prefix ()
+  "Test that digits in invalid identifier-like tokens are not fontified."
+  (should-not (kcl-test--has-face "x = 123abc" "123" 'font-lock-constant-face)))
+
 ;;; Comments
 
 (ert-deftest kcl-fontlock-comment ()
@@ -259,6 +263,10 @@
 (ert-deftest kcl-fontlock-decorator ()
   "Test that decorators are fontified."
   (should (kcl-test--has-face "@deprecated\nschema Foo:" "deprecated" 'font-lock-preprocessor-face)))
+
+(ert-deftest kcl-fontlock-decorator-argument ()
+  "Test that decorator keyword arguments are fontified."
+  (should (kcl-test--has-face "@deprecated(reason=\"old\")\nschema Foo:" "reason" 'font-lock-variable-name-face)))
 
 ;;; Schema attributes
 
@@ -355,6 +363,24 @@
     (insert "x = 1")
     (kcl-mode-indent-line)
     (should (= (current-indentation) 0))))
+
+(ert-deftest kcl-indent-after-binary-operator ()
+  "Test continuation indentation after a binary operator."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "x = a +\n")
+    (insert "b")
+    (kcl-mode-indent-line)
+    (should (= (current-indentation) 4))))
+
+(ert-deftest kcl-indent-leading-binary-operator ()
+  "Test continuation indentation before a leading binary operator."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "x = a\n")
+    (insert "+ b")
+    (kcl-mode-indent-line)
+    (should (= (current-indentation) 4))))
 
 ;;; Imenu
 

@@ -43,7 +43,10 @@
 
 (require 'rx)
 (require 'ansi-color)
+(require 'cl-lib)
 (require 'compile)
+(require 'eldoc)
+(require 'xref)
 
 ;; Declarations for optional transient integration
 (declare-function transient-define-prefix "transient" t)
@@ -162,6 +165,23 @@ Supported values: \"yaml\", \"json\", \"toml\"."
     "multiplyof" "isunique" "zip" "enumerate")
   "KCL built-in function names.")
 
+(defun kcl-mode--match-decorator-argument (limit)
+  "Search for decorator keyword arguments up to LIMIT."
+  (let ((found nil))
+    (while (and (not found)
+                (re-search-forward "\\_<\\([[:alnum:]_]+\\)\\_>[ \t]*=" limit t))
+      (let ((match-data (match-data))
+            (ppss (syntax-ppss))
+            (line-start (line-beginning-position)))
+        (when (and (not (nth 3 ppss))
+                   (not (nth 4 ppss))
+                   (save-excursion
+                     (goto-char line-start)
+                     (looking-at "^[ \t]*@")))
+          (set-match-data match-data)
+          (setq found t))))
+    found))
+
 (defconst kcl-mode--font-lock-keywords
   (let ((keywords-re (regexp-opt kcl-mode--keywords 'symbols))
         (constants-re (regexp-opt kcl-mode--constants 'symbols))
@@ -171,6 +191,10 @@ Supported values: \"yaml\", \"json\", \"toml\"."
      ;; Decorators: @name or @name(args)
      (list (rx line-start (* space) "@" (group (+ (any word ?_))) (* (any space)) (? "("))
            1 'font-lock-preprocessor-face)
+
+     ;; Decorator keyword arguments: @name(reason="...")
+     '(kcl-mode--match-decorator-argument
+       1 font-lock-variable-name-face)
 
      ;; Schema/mixin/protocol/rule definition names
      (list (rx symbol-start
@@ -394,6 +418,15 @@ Supported values: \"yaml\", \"json\", \"toml\"."
              ;; Previous line ends with backslash (continuation) -> indent
              ((looking-at ".*\\\\[ \t]*$")
               (setq cur-indent (+ (current-indentation) kcl-indent-offset)))
+             ;; Previous line ends with a binary operator -> continuation indent
+             ((looking-at
+               ".*\\(?:[-+*/%|&=<>]\\|\\_<\\(?:and\\|or\\)\\_>\\)[ \t]*\\(#.*\\)?$")
+              (setq cur-indent (+ (current-indentation) kcl-indent-offset)))
+             ;; Current line continues an expression with a leading operator
+             ((save-excursion
+                (forward-line 1)
+                (looking-at "^[ \t]*\\(?:[-+*/%|&=<>]\\|\\_<\\(?:and\\|or\\)\\_>\\)"))
+              (setq cur-indent (+ (current-indentation) kcl-indent-offset)))
              ;; Default: same indentation as previous line
              (t
               (setq cur-indent (current-indentation)))))))
@@ -551,6 +584,19 @@ Supports ANSI colors and KCL-style error navigation."
   ;; Enable ANSI color rendering
   (add-hook 'compilation-filter-hook #'kcl--colorize-compilation nil t))
 
+(define-compilation-mode kcl-test-compilation-mode "KCL-Test"
+  "Major mode for KCL test output buffers.
+Extends `kcl-compilation-mode' with simple pass/fail highlighting."
+  (setq-local compilation-error-regexp-alist '(kcl))
+  (setq-local compilation-error-regexp-alist-alist
+              (list kcl-compilation-error-regexp))
+  (add-hook 'compilation-filter-hook #'kcl--colorize-compilation nil t)
+  (font-lock-add-keywords
+   nil
+   '(("^\\(?:PASS\\|ok\\)\\b.*" . font-lock-string-face)
+     ("^\\(?:FAIL\\|FAILED\\|error\\)\\b.*" . font-lock-warning-face))
+   t))
+
 (defun kcl--colorize-compilation ()
   "Apply ANSI color codes in the compilation buffer."
   (let ((inhibit-read-only t))
@@ -577,6 +623,82 @@ For use with `which-function-mode'."
       (let ((kind (match-string 1))
             (name (match-string 2)))
         (format "%s %s" kind name)))))
+
+(defun kcl--schema-definitions ()
+  "Return an alist of schema names to parent schema names in the buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((defs nil))
+      (while (re-search-forward
+             "^[ \t]*schema[ \t]+\\([[:alnum:]_]+\\)\\(?:[ \t]*(\\([[:alnum:]_]+\\))\\)?"
+             nil t)
+        (push (cons (match-string-no-properties 1)
+                   (match-string-no-properties 2))
+             defs))
+      defs)))
+
+(defun kcl--schema-at-point ()
+  "Return the current schema name at point, or nil."
+  (save-excursion
+    (when (re-search-backward
+          "^[ \t]*schema[ \t]+\\([[:alnum:]_]+\\)\\(?:[ \t]*(\\([[:alnum:]_]+\\))\\)?"
+          nil t)
+      (match-string-no-properties 1))))
+
+(defun kcl-schema-hierarchy-at-point ()
+  "Show the inheritance hierarchy for the schema at point."
+  (interactive)
+  (let* ((schema (kcl--schema-at-point))
+        (defs (kcl--schema-definitions))
+        (hierarchy nil))
+    (unless schema
+      (user-error "No schema at point"))
+    (while schema
+      (push schema hierarchy)
+      (setq schema (cdr (assoc schema defs))))
+    (setq hierarchy (nreverse hierarchy))
+    (if (called-interactively-p 'interactive)
+        (let ((buf (get-buffer-create "*kcl-schema-hierarchy*")))
+         (with-current-buffer buf
+           (setq buffer-read-only nil)
+           (erase-buffer)
+           (insert (mapconcat #'identity hierarchy " -> ") "\n")
+           (setq buffer-read-only t))
+         (display-buffer buf)
+         (message "%s" (mapconcat #'identity hierarchy " -> ")))
+      hierarchy)))
+
+(defun kcl-breadcrumb-at-point ()
+  "Return a breadcrumb for the current KCL position."
+  (let ((def (kcl-mode--which-function)))
+    (when def
+      (save-excursion
+        (when (and (bolp) (not (bobp)))
+         (forward-line -1))
+        (while (and (looking-at "^[ \t]*$") (not (bobp)))
+         (forward-line -1))
+        (let ((suffix nil)
+             (origin (point))
+             (origin-indent (current-indentation)))
+         (when (re-search-backward "^[ \t]*check[ \t]*:" nil t)
+           (let ((check-pos (point)))
+             (when (and (< check-pos origin)
+                        (> origin-indent
+                           (save-excursion
+                             (goto-char check-pos)
+                             (current-indentation))))
+               (setq suffix "check"))))
+         (if suffix
+             (format "%s > %s" def suffix)
+           def))))))
+
+(define-minor-mode kcl-breadcrumb-mode
+  "Show the current KCL schema/rule breadcrumb in the header line."
+  :lighter ""
+  :group 'kcl
+  (if kcl-breadcrumb-mode
+      (setq-local header-line-format '(:eval (kcl-breadcrumb-at-point)))
+    (kill-local-variable 'header-line-format)))
 
 ;;; Eval with Snapshot Diff
 
@@ -730,7 +852,8 @@ Shows the diff in a `diff-mode' buffer."
         (let ((inhibit-read-only t))
           (erase-buffer)
           (call-process "diff" nil diff-buf nil "-u"
-                        "--label" "frozen" "--label" "current"
+                        "--label" (format "frozen (%s)" fmt)
+                        "--label" (format "current (%s)" fmt)
                         old-file new-file)
           (goto-char (point-min))
           (diff-mode)
@@ -787,20 +910,35 @@ The output format is controlled by `kcl-eval-output-format'; use
     (let ((default-directory dir))
       (compilation-start
        (format "%s test" (shell-quote-argument kcl-command))
-       'kcl-compilation-mode))))
+       'kcl-test-compilation-mode))))
+
+(defvar kcl-vet-last-data-file nil
+  "Last data file passed to `kcl-vet'.")
+
+(defvar kcl-vet-last-schema-name nil
+  "Last schema name passed to `kcl-vet'.")
 
 (defun kcl-vet (data-file &optional schema-name)
   "Validate DATA-FILE against a KCL schema.
 When called interactively, prompts for the data file.
 Optional SCHEMA-NAME specifies which schema to validate against."
   (interactive
-   (list (read-file-name "Data file to validate: " nil nil t)
-         (let ((s (read-string "Schema name (empty for default): ")))
-           (if (string-empty-p s) nil s))))
+   (let* ((default-data (and kcl-vet-last-data-file
+                             (file-exists-p kcl-vet-last-data-file)
+                             kcl-vet-last-data-file))
+          (data-file (read-file-name "Data file to validate: "
+                                      nil default-data t nil))
+          (schema-default (or kcl-vet-last-schema-name "")))
+     (list data-file
+           (let ((s (read-string "Schema name (empty for default): "
+                                 nil nil schema-default)))
+             (if (string-empty-p s) nil s)))))
   (let ((kcl-file (buffer-file-name)))
     (unless kcl-file
       (user-error "Buffer is not visiting a KCL file"))
     (save-buffer)
+    (setq kcl-vet-last-data-file (expand-file-name data-file))
+    (setq kcl-vet-last-schema-name schema-name)
     (let ((cmd (format "%s vet %s %s %s"
                        (shell-quote-argument kcl-command)
                        (shell-quote-argument kcl-file)
@@ -973,6 +1111,36 @@ If no imports exist, jump to the beginning of the buffer."
                "\\`[[:alnum:]_]+\\(?:\\.[[:alnum:]_]+\\)*\\'" symbol)
           symbol)))))
 
+(defun kcl-doc--summary-for (symbol)
+  "Return a short documentation summary for SYMBOL."
+  (cond
+   ((assoc symbol kcl-doc--builtin-type-urls)
+    (format "%s: KCL built-in type" symbol))
+   ((assoc symbol kcl-doc--keyword-urls)
+    (format "%s: KCL keyword" symbol))
+   ((member symbol kcl-mode--builtin-functions)
+    (format "%s: KCL built-in function" symbol))
+   ((member symbol kcl-doc--stdlib-modules)
+    (format "%s: KCL standard library module" symbol))
+   ((kcl-doc--url-for symbol)
+    (format "%s: KCL standard library symbol" symbol))
+   (t nil)))
+
+(defun kcl-eldoc-function (&optional callback &rest _ignored)
+  "Return Eldoc documentation for the KCL symbol at point.
+When CALLBACK is non-nil, pass the documentation to CALLBACK for
+new-style `eldoc-documentation-functions'."
+  (let* ((symbol (kcl-doc-symbol-at-point))
+         (summary (and symbol (kcl-doc--summary-for symbol)))
+         (url (and symbol (kcl-doc--url-for symbol)))
+         (doc (and summary
+                   (if url
+                       (format "%s (%s)" summary url)
+                     summary))))
+    (when (and callback doc)
+      (funcall callback doc :thing symbol))
+    doc))
+
 (defun kcl-open-doc-at-point ()
   "Open KCL documentation for the symbol at point in a browser.
 Understands dotted names such as module.function."
@@ -1012,6 +1180,72 @@ Understands dotted names such as module.function."
       (when (member mod kcl-doc--stdlib-modules)
         (format "https://kcl-lang.io/docs/reference/model/%s#%s" mod func))))
    (t nil)))
+
+;;; Xref Integration
+
+(defun kcl-xref-backend ()
+  "Return the KCL xref backend for KCL buffers."
+  'kcl)
+
+(defun kcl-xref--project-files ()
+  "Return KCL source files in the current KCL project."
+  (let ((root (or (kcl-project-root)
+                 (and (buffer-file-name)
+                      (file-name-directory (buffer-file-name)))
+                 default-directory)))
+   (when (and root (file-directory-p root))
+     (directory-files-recursively root "\\.k\\'"))))
+
+(defun kcl-xref--module-candidates (identifier)
+  "Return file candidates for module IDENTIFIER."
+  (let* ((root (or (kcl-project-root) default-directory))
+        (path (replace-regexp-in-string "\\." "/" identifier))
+        (relatives (list (concat path ".k")
+                         (concat path "/main.k")
+                         (concat "vendor/" path ".k")
+                         (concat "vendor/" path "/main.k"))))
+   (delq nil
+         (mapcar (lambda (relative)
+                   (let ((file (expand-file-name relative root)))
+                     (when (file-exists-p file) file)))
+                 relatives))))
+
+(defun kcl-xref--definitions-in-file (identifier file)
+  "Return xref definitions for IDENTIFIER found in FILE."
+  (let ((refs nil)
+       (regexp (concat "^[ \t]*\\(?:schema\\|mixin\\|protocol\\|rule\\|type\\)"
+                       "[ \t]+"
+                       (regexp-quote identifier)
+                       "\\_>")))
+   (with-temp-buffer
+     (insert-file-contents file)
+     (goto-char (point-min))
+     (while (re-search-forward regexp nil t)
+       (push (xref-make (format "%s in %s" identifier
+                                (file-name-nondirectory file))
+                        (xref-make-file-location
+                         file
+                         (line-number-at-pos)
+                         (1+ (current-column))))
+             refs)))
+   (nreverse refs)))
+
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql kcl)))
+  "Return the KCL identifier at point for xref."
+  (kcl-doc-symbol-at-point))
+
+(cl-defmethod xref-backend-definitions ((_backend (eql kcl)) identifier)
+  "Return xref definitions for KCL IDENTIFIER."
+  (let ((module-files (kcl-xref--module-candidates identifier)))
+   (if module-files
+       (mapcar (lambda (file)
+                 (xref-make (format "module %s" identifier)
+                            (xref-make-file-location file 1 0)))
+               module-files)
+     (apply #'append
+            (mapcar (lambda (file)
+                      (kcl-xref--definitions-in-file identifier file))
+                    (kcl-xref--project-files))))))
 
 ;;; Tempo Templates
 
@@ -1100,6 +1334,49 @@ Understands dotted names such as module.function."
 (defvar-local kcl--flymake-proc nil
   "Current flymake process for KCL.")
 
+(defun kcl--flymake-diagnostic-region (source line col)
+  "Return a diagnostic region in SOURCE for LINE and COL."
+  (with-current-buffer source
+    (save-excursion
+      (goto-char (point-min))
+      (forward-line (max 0 (1- line)))
+      (let* ((bol (point))
+             (eol (line-end-position))
+             (beg (min (+ bol (max 0 (1- col))) eol))
+             (end (min (+ beg 1) eol)))
+        (cons beg end)))))
+
+(defun kcl--flymake-parse-diagnostics (source output)
+  "Parse KCL lint OUTPUT into Flymake diagnostics for SOURCE."
+  (let ((diags nil)
+        (current-type :error)
+        (current-message nil))
+    (with-temp-buffer
+      (insert output)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (cond
+         ((looking-at "^warning\\[W[0-9]+\\]:[ \t]*\\(.*\\)")
+          (setq current-type :warning)
+          (setq current-message (match-string 1)))
+         ((looking-at "^\\(?:error\\[E[0-9]+\\]\\|EvaluationError\\)[: \t]*\\(.*\\)")
+          (setq current-type :error)
+          (setq current-message (match-string 1)))
+         ((looking-at " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)")
+          (let* ((line (string-to-number (match-string 2)))
+                 (col (string-to-number (match-string 3)))
+                 (region (kcl--flymake-diagnostic-region source line col))
+                 (msg (or current-message
+                          (string-trim
+                           (buffer-substring-no-properties
+                            (line-beginning-position)
+                            (line-end-position))))))
+            (push (flymake-make-diagnostic
+                   source (car region) (cdr region) current-type msg)
+                  diags))))
+        (forward-line 1)))
+    (nreverse diags)))
+
 (defun kcl-flymake-backend (report-fn &rest _args)
   "Flymake backend for KCL using `kcl lint'.
 REPORT-FN is the Flymake callback.  Writes buffer contents to a
@@ -1126,37 +1403,10 @@ forcing a save."
                    (unwind-protect
                        (when (eq proc (buffer-local-value 'kcl--flymake-proc source))
                          (with-current-buffer (process-buffer proc)
-                           (goto-char (point-min))
-                           (let ((diags nil))
-                             (while (re-search-forward
-                                     " *--> \\(.*?\\):\\([0-9]+\\):\\([0-9]+\\)"
-                                     nil t)
-                               (let* ((line (string-to-number (match-string 2)))
-                                      (col (string-to-number (match-string 3)))
-                                      ;; Look backward for error/warning type
-                                      (type (save-excursion
-                                              (if (re-search-backward
-                                                   "^warning\\[W[0-9]+\\]" nil t)
-                                                  :warning
-                                                :error)))
-                                      ;; Get the message from the --> line
-                                      (msg (save-excursion
-                                             (forward-line 0)
-                                             (buffer-substring-no-properties
-                                              (point) (line-end-position)))))
-                                 (with-current-buffer source
-                                   (save-excursion
-                                     (goto-char (point-min))
-                                     (forward-line (1- line))
-                                     (let* ((bol (point))
-                                            (eol (line-end-position))
-                                            (beg (min (+ bol (1- col)) eol))
-                                            (end (min (+ beg 1) eol)))
-                                       (push (flymake-make-diagnostic
-                                              source beg end type
-                                              (string-trim msg))
-                                             diags))))))
-                             (funcall report-fn (nreverse diags)))))
+                           (funcall report-fn
+                                    (kcl--flymake-parse-diagnostics
+                                     source
+                                     (buffer-string)))))
                      (ignore-errors (delete-file temp-file))
                       (kill-buffer (process-buffer proc)))))))))))
 
@@ -1284,6 +1534,12 @@ language for cloud-native configuration.
 
   ;; which-function-mode
   (setq-local which-func-functions '(kcl-mode--which-function))
+
+  ;; Eldoc / Xref
+  (setq-local eldoc-documentation-function #'kcl-eldoc-function)
+  (when (boundp 'eldoc-documentation-functions)
+    (add-hook 'eldoc-documentation-functions #'kcl-eldoc-function nil t))
+  (add-hook 'xref-backend-functions #'kcl-xref-backend nil t)
 
   ;; Flymake
   (add-hook 'flymake-diagnostic-functions #'kcl-flymake-backend nil t)

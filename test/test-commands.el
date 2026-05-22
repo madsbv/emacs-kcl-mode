@@ -172,6 +172,35 @@
             (kill-buffer)))
       (delete-directory dir t))))
 
+(ert-deftest kcl-eval-diff-labels-include-format ()
+  "Diff labels should include the frozen output format."
+  (let* ((dir (make-temp-file "kcl-eval-diff-" t))
+         (file (expand-file-name "test.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "x = 1\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            (setq kcl-eval-output-format "yaml")
+            (kcl-eval-buffer)
+            (kcl-eval-freeze)
+            (erase-buffer)
+            (insert "x = 2\n")
+            (save-buffer)
+            (kcl-eval-diff)
+            (let ((diff (get-buffer "*kcl-diff*")))
+              (should diff)
+              (with-current-buffer diff
+                (let ((text (buffer-substring-no-properties
+                             (point-min) (point-max))))
+                  (should (string-match-p "--- frozen (yaml)" text))
+                  (should (string-match-p "\\+\\+\\+ current (yaml)" text))))
+              (kill-buffer diff))
+            (when (get-buffer "*kcl-output*")
+              (kill-buffer "*kcl-output*"))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
 (ert-deftest kcl-eval-json-format ()
   "kcl-eval-buffer with json format should produce JSON output."
   (let* ((dir (make-temp-file "kcl-eval-" t))
@@ -260,9 +289,45 @@
   "kcl-test should be an interactive command."
   (should (commandp 'kcl-test)))
 
+(ert-deftest kcl-test-uses-test-compilation-mode ()
+  "kcl-test should use `kcl-test-compilation-mode'."
+  (let ((captured nil)
+        (kcl-command "kcl"))
+    (cl-letf (((symbol-function 'compilation-start)
+               (lambda (cmd mode)
+                 (setq captured (list cmd mode)))))
+      (with-temp-buffer
+        (kcl-mode)
+        (kcl-test)))
+    (should (equal (nth 0 captured) "kcl test"))
+    (should (eq (nth 1 captured) 'kcl-test-compilation-mode))))
+
 (ert-deftest kcl-vet-command-defined ()
   "kcl-vet should be an interactive command."
   (should (commandp 'kcl-vet)))
+
+(ert-deftest kcl-vet-remembers-last-values ()
+  "kcl-vet should remember the last data file and schema."
+  (let* ((dir (make-temp-file "kcl-vet-" t))
+         (kcl-file (expand-file-name "main.k" dir))
+         (data-file (expand-file-name "data.yaml" dir))
+         (captured nil))
+    (unwind-protect
+        (progn
+          (with-temp-file kcl-file (insert "schema Data:\n    x: int\n"))
+          (with-temp-file data-file (insert "x: 1\n"))
+          (cl-letf (((symbol-function 'compilation-start)
+                     (lambda (cmd mode)
+                       (setq captured (list cmd mode)))))
+            (with-current-buffer (find-file-noselect kcl-file)
+              (kcl-mode)
+              (kcl-vet data-file "Data")
+              (should (string= kcl-vet-last-data-file data-file))
+              (should (string= kcl-vet-last-schema-name "Data"))
+              (kill-buffer))))
+      (delete-directory dir t))
+    (should (string-match-p "kcl vet" (car captured)))
+    (should (eq (cadr captured) 'kcl-compilation-mode))))
 
 (ert-deftest kcl-mod-init-command-defined ()
   "kcl-mod-init should be an interactive command."
@@ -405,6 +470,55 @@
   "Unknown symbols should return nil."
   (should-not (kcl-doc--url-for "UnknownThing12345")))
 
+(ert-deftest kcl-eldoc-function-builtin ()
+  "kcl-eldoc-function should document known symbols."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "value = len(items)\n")
+    (goto-char (point-min))
+    (search-forward "len")
+    (should (string-match-p "built-in function" (kcl-eldoc-function)))))
+
+(ert-deftest kcl-xref-finds-schema-definition ()
+  "The KCL xref backend should find project schema definitions."
+  (let* ((dir (make-temp-file "kcl-xref-" t))
+         (file (expand-file-name "main.k" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file (expand-file-name "kcl.mod" dir)
+            (insert "[package]\n"))
+          (with-temp-file file
+            (insert "schema Foo:\n    x: int\n\nbar = Foo {x = 1}\n"))
+          (with-current-buffer (find-file-noselect file)
+            (kcl-mode)
+            (let ((defs (xref-backend-definitions 'kcl "Foo")))
+              (should defs)
+              (should (string-match-p "Foo" (xref-item-summary (car defs)))))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
+(ert-deftest kcl-xref-finds-module-file ()
+  "The KCL xref backend should resolve module names to files."
+  (let* ((dir (make-temp-file "kcl-xref-module-" t))
+         (module-dir (expand-file-name "foo" dir))
+         (module-file (expand-file-name "bar.k" module-dir))
+         (main-file (expand-file-name "main.k" dir)))
+    (unwind-protect
+        (progn
+          (make-directory module-dir t)
+          (with-temp-file (expand-file-name "kcl.mod" dir)
+            (insert "[package]\n"))
+          (with-temp-file module-file (insert "value = 1\n"))
+          (with-temp-file main-file (insert "import foo.bar\n"))
+          (with-current-buffer (find-file-noselect main-file)
+            (kcl-mode)
+            (let ((defs (xref-backend-definitions 'kcl "foo.bar")))
+              (should defs)
+              (should (string-match-p "module foo.bar"
+                                      (xref-item-summary (car defs)))))
+            (kill-buffer)))
+      (delete-directory dir t))))
+
 ;;; ──────────────────────────────────────────────
 ;;; Tempo Templates
 ;;; ──────────────────────────────────────────────
@@ -450,6 +564,20 @@
   (with-temp-buffer
     (kcl-mode)
     (should (memq 'kcl-flymake-backend flymake-diagnostic-functions))))
+
+(ert-deftest kcl-flymake-parse-diagnostic-types ()
+  "Flymake parsing should keep warning and error diagnostic types distinct."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "x = 1\n")
+    (let* ((output (concat "warning[W2001]: style issue\n"
+                           " --> /tmp/test.k:1:1\n"
+                           "error[E1001]: type issue\n"
+                           " --> /tmp/test.k:1:3\n"))
+           (diags (kcl--flymake-parse-diagnostics (current-buffer) output)))
+      (should (= (length diags) 2))
+      (should (eq (flymake-diagnostic-type (nth 0 diags)) :warning))
+      (should (eq (flymake-diagnostic-type (nth 1 diags)) :error)))))
 
 ;;; ──────────────────────────────────────────────
 ;;; Transient / Menu
@@ -676,6 +804,32 @@
     ;; Disable: should remove it
     (kcl-live-preview-mode -1)
     (should-not (memq 'kcl-eval-buffer after-save-hook))))
+
+(ert-deftest kcl-schema-hierarchy-at-point-returns-chain ()
+  "Schema hierarchy should include parent schemas."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "schema Base:\n    x: int\n\nschema Child(Base):\n    y: int\n")
+    (goto-char (point-max))
+    (should (equal (kcl-schema-hierarchy-at-point)
+                   '("Child" "Base")))))
+
+(ert-deftest kcl-breadcrumb-at-point-check-block ()
+  "Breadcrumb should include check blocks."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "schema Foo:\n    x: int\n    check:\n        x > 0\n")
+    (goto-char (point-max))
+    (should (string= (kcl-breadcrumb-at-point) "schema Foo > check"))))
+
+(ert-deftest kcl-breadcrumb-mode-sets-header-line ()
+  "kcl-breadcrumb-mode should install a header line expression."
+  (with-temp-buffer
+    (kcl-mode)
+    (kcl-breadcrumb-mode 1)
+    (should header-line-format)
+    (kcl-breadcrumb-mode -1)
+    (should-not (local-variable-p 'header-line-format))))
 
 (ert-deftest kcl-keymap-live-preview ()
   "C-c C-p should be bound to kcl-live-preview-mode."
