@@ -962,10 +962,22 @@ If no imports exist, jump to the beginning of the buffer."
     ("in" . "https://kcl-lang.io/docs/reference/lang/tour#membership-operators"))
   "URL mappings for KCL keywords.")
 
+(defun kcl-doc-symbol-at-point ()
+  "Return the KCL symbol at point, including dotted module names."
+  (save-excursion
+    (skip-chars-backward "[:alnum:]_.")
+    (let ((start (point)))
+      (skip-chars-forward "[:alnum:]_.")
+      (let ((symbol (buffer-substring-no-properties start (point))))
+        (when (string-match-p
+               "\\`[[:alnum:]_]+\\(?:\\.[[:alnum:]_]+\\)*\\'" symbol)
+          symbol)))))
+
 (defun kcl-open-doc-at-point ()
-  "Open KCL documentation for the symbol at point in a browser."
+  "Open KCL documentation for the symbol at point in a browser.
+Understands dotted names such as module.function."
   (interactive)
-  (let ((symbol (thing-at-point 'symbol t)))
+  (let ((symbol (kcl-doc-symbol-at-point)))
     (unless symbol
       (user-error "No symbol at point"))
     (let ((url (kcl-doc--url-for symbol)))
@@ -993,7 +1005,8 @@ If no imports exist, jump to the beginning of the buffer."
    ((member symbol kcl-doc--stdlib-modules)
     (format "https://kcl-lang.io/docs/reference/model/%s" symbol))
    ;; Module.function (e.g., "math.log")
-   ((string-match "\\`\\([a-z_]+\\)\\.\\([a-z_]+\\)\\'" symbol)
+   ((string-match "\\`\\([[:alpha:]_][[:alnum:]_]*\\)\\.\\([[:alpha:]_][[:alnum:]_]*\\)\\'"
+                  symbol)
     (let ((mod (match-string 1 symbol))
           (func (match-string 2 symbol)))
       (when (member mod kcl-doc--stdlib-modules)

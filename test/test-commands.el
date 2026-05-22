@@ -377,6 +377,30 @@
   (should (string= (kcl-doc--url-for "math.log")
                     "https://kcl-lang.io/docs/reference/model/math#log")))
 
+(ert-deftest kcl-doc-symbol-at-point-dotted ()
+  "Documentation symbol lookup should include dotted module names."
+  (with-temp-buffer
+    (kcl-mode)
+    (insert "value = math.log(10)\n")
+    (search-backward "math")
+    (search-forward "log")
+    (should (string= (kcl-doc-symbol-at-point) "math.log"))))
+
+(ert-deftest kcl-open-doc-at-point-dotted ()
+  "Documentation lookup should open module.function URLs at point."
+  (let ((opened-url nil))
+    (cl-letf (((symbol-function 'browse-url)
+               (lambda (url &rest _args)
+                 (setq opened-url url))))
+      (with-temp-buffer
+        (kcl-mode)
+        (insert "value = math.log(10)\n")
+        (search-backward "math")
+        (search-forward "log")
+        (kcl-open-doc-at-point)))
+    (should (string= opened-url
+                     "https://kcl-lang.io/docs/reference/model/math#log"))))
+
 (ert-deftest kcl-doc-url-unknown-returns-nil ()
   "Unknown symbols should return nil."
   (should-not (kcl-doc--url-for "UnknownThing12345")))

@@ -10,7 +10,7 @@ This document captures the current state of the `emacs-kcl-mode` codebase, the p
 
 ```
 emacs-kcl-mode/
-├── kcl-mode.el          # Regex-based major mode + ALL shared commands (1336 lines)
+├── kcl-mode.el          # Regex-based major mode + ALL shared commands (1349 lines)
 ├── kcl-ts-mode.el       # Tree-sitter major mode (346 lines)
 ├── kcl-lsp.el           # lsp-mode integration (115 lines)
 ├── kcl-eglot.el         # eglot integration (80 lines)
@@ -29,7 +29,7 @@ emacs-kcl-mode/
 │   ├── test-fontlock.el  # 65 regex mode ERT tests
 │   ├── test-ts-mode.el   # 46 tree-sitter mode ERT tests
 │   ├── test-lsp.el       # 19 LSP tests (11 config + 8 live eglot)
-│   ├── test-commands.el  # 79 command/feature ERT tests
+│   ├── test-commands.el  # 81 command/feature ERT tests
 │   ├── test-doom.el      # 15 Doom Emacs integration tests
 │   ├── test-integration.el # 9 integration tests (numaflow)
 │   ├── run-tests.sh      # Test runner script (runs all 7 suites)
@@ -37,7 +37,7 @@ emacs-kcl-mode/
 └── libtree-sitter-kcl.so # Compiled grammar (gitignored, build artifact)
 ```
 
-Total: ~5000 lines across source, tests, and docs. 233 ERT tests, all passing.
+Total: ~5000 lines across source, tests, and docs. 235 ERT tests, all passing.
 
 ### Architectural Decisions
 
@@ -173,7 +173,7 @@ The `Makefile` provides standard development targets:
 
 14. **`kcl-doc--url-for` has a hardcoded URL set.** If kcl-lang.io restructures its documentation, all URLs break. There's no fallback to the language server's hover documentation.
 
-15. **`kcl-open-doc-at-point` uses `thing-at-point 'symbol`** which doesn't capture `module.function` as a single symbol in all cases due to `.` being punctuation in the syntax table.
+15. **Doc lookup is not project-aware.** `kcl-open-doc-at-point` handles dotted standard-library names such as `math.log`, but unknown project-local modules fall back to kcl-lang.io search instead of LSP hover or local generated docs.
 
 ### Package Metadata
 
@@ -332,7 +332,11 @@ Added `flake.nix` and `flake.lock` with a pinned `tree-sitter-kcl` grammar build
 
 ### Phase 6: Module and Import Commands (B12, B13)
 
-Added `kcl-mod-update`, `kcl-mod-graph`, and `kcl-import-add`. Improved `kcl-goto-imports` to find real import statements while avoiding comments/strings. The transient menu exposes the new commands, and `test/test-commands.el` now covers command construction, import insertion, duplicate avoidance, and safer import navigation. Total test count: 233.
+Added `kcl-mod-update`, `kcl-mod-graph`, and `kcl-import-add`. Improved `kcl-goto-imports` to find real import statements while avoiding comments/strings. The transient menu exposes the new commands, and `test/test-commands.el` now covers command construction, import insertion, duplicate avoidance, and safer import navigation.
+
+### Phase 7: Documentation Lookup Fix
+
+Added `kcl-doc-symbol-at-point` and wired `kcl-open-doc-at-point` to use it, so dotted names like `math.log` resolve to standard-library function documentation. Total test count: 235.
 
 ### Lessons Learned
 
