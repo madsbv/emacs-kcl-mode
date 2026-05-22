@@ -14,11 +14,17 @@ emacs-kcl-mode/
 ├── kcl-ts-mode.el       # Tree-sitter major mode (346 lines)
 ├── kcl-lsp.el           # lsp-mode integration (115 lines)
 ├── kcl-eglot.el         # eglot integration (80 lines)
+├── kcl-flycheck.el      # Optional Flycheck integration (64 lines)
+├── ob-kcl.el            # Optional Org Babel integration (63 lines)
 ├── Makefile             # Build targets: byte-compile, lint, test, nix-test, flake-check, clean (62 lines)
 ├── flake.nix            # Reproducible Nix dev shell and checks (115 lines)
 ├── flake.lock           # Locked nixpkgs input
 ├── .gitlab-ci.yml       # Thin GitLab CI wrapper around `nix flake check`
-├── README.md            # User documentation (394 lines)
+├── Eask                 # Non-Nix package development scripts
+├── CHANGELOG.md         # Semver release notes
+├── DEVELOPING.md        # Contributor workflow documentation
+├── melpa/recipes/kcl-mode # MELPA recipe draft
+├── README.md            # User documentation
 ├── AGENTS.md            # This file
 ├── .gitignore
 ├── snippets/kcl-mode/   # 10 YASnippet snippet files
@@ -31,13 +37,14 @@ emacs-kcl-mode/
 │   ├── test-lsp.el       # 19 LSP tests (11 config + 8 live eglot)
 │   ├── test-commands.el  # 81 command/feature ERT tests
 │   ├── test-doom.el      # 15 Doom Emacs integration tests
+│   ├── test-optional.el  # 3 optional integration tests
 │   ├── test-integration.el # 9 integration tests (numaflow)
-│   ├── run-tests.sh      # Test runner script (runs all 7 suites)
+│   ├── run-tests.sh      # Test runner script (runs all suites)
 │   └── compare-nvim.sh   # Neovim cross-validation script
 └── libtree-sitter-kcl.so # Compiled grammar (gitignored, build artifact)
 ```
 
-Total: ~5000 lines across source, tests, and docs. 235 ERT tests, all passing.
+Total: ~5700 lines across source, tests, and docs. 252 ERT tests, all passing.
 
 ### Architectural Decisions
 
@@ -57,9 +64,11 @@ Total: ~5000 lines across source, tests, and docs. 235 ERT tests, all passing.
 
 8. **Flymake backend uses temp files.** Buffer contents are written to a temporary `.k` file for linting, so unsaved buffers can be checked without forcing a save.
 
-9. **Byte-compilation and checkdoc are clean.** All four `.el` files compile with zero warnings and pass checkdoc. The `Makefile` enforces this via `make byte-compile` and `make lint`.
+9. **Byte-compilation and checkdoc are clean.** All six `.el` files compile with zero warnings and pass checkdoc. The `Makefile` enforces this via `make byte-compile` and `make lint`.
 
 10. **Nix is the reproducible validation path.** `flake.nix` builds the KCL tree-sitter grammar, provides `emacs`, `kcl`, and `kcl-language-server` in a dev shell, and runs `make all` in `nix flake check`. `.gitlab-ci.yml` is intentionally thin and delegates to that check.
+
+11. **Optional integrations stay dependency-light.** `kcl-lsp.el`, `kcl-eglot.el`, and `kcl-flycheck.el` defer registration until their optional packages load. `ob-kcl.el` requires Org Babel because it provides a Babel executor.
 
 ### KCL Language Facts (Discovered During Development)
 
@@ -103,7 +112,7 @@ Total: ~5000 lines across source, tests, and docs. 235 ERT tests, all passing.
 ### Testing Infrastructure
 
 - All tests run via `emacs --batch` with ERT
-- `run-tests.sh` orchestrates 7 test suites (fontlock, ts-mode, LSP, commands, Doom, smoke, integration)
+- `run-tests.sh` orchestrates fontlock, ts-mode, LSP, commands, Doom, optional integration, smoke, and numaflow integration suites
 - `make test` runs the full suite; `make all` also runs byte-compile and lint
 - `run-tests.sh` honors `EMACS`, `KCL_TREE_SITTER_LOAD_PATH`, and `KCL_NUMAFLOW_DIR`
 - `nix flake check --print-build-logs` builds the tree-sitter grammar and runs `make all` in a clean Nix environment
@@ -139,11 +148,11 @@ The `Makefile` provides standard development targets:
 
 3. **No semantic highlighting** — regex mode cannot distinguish between a schema instantiation (`Foo {}`) and a dict literal. Tree-sitter mode handles this correctly.
 
-4. **Decorator arguments** are not individually highlighted — only the decorator name gets `font-lock-preprocessor-face`.
+4. ~~**Decorator arguments** were not individually highlighted.~~ **DONE.** Regex font-lock now highlights simple decorator argument names.
 
 ### Indentation
 
-5. **Regex indentation is heuristic-based.** It handles the common cases (colon-ending lines, closing brackets, elif/else alignment) but can fail on complex multi-line expressions, continuation lines with operators, or deeply nested comprehensions.
+5. **Regex indentation is heuristic-based.** It handles common blocks, closing brackets, elif/else alignment, and operator continuations, but can still fail on deeply nested or unusual multi-line expressions.
 
 6. **Tree-sitter indentation** covers more cases but lacks rules for some edge cases like multi-line function call arguments that aren't in parentheses, or `assert` statements spanning multiple lines.
 
@@ -159,29 +168,29 @@ The `Makefile` provides standard development targets:
 
 ### Flymake
 
-10. **Flymake error type detection** looks backward from the `-->` line for `warning[W...]` patterns, which can occasionally match the wrong diagnostic if errors are interleaved in the output.
+10. ~~**Flymake error type detection** could match the wrong diagnostic when warnings and errors interleaved.~~ **DONE.** Diagnostics are parsed as blocks before creating Flymake objects.
 
 ### Commands
 
-11. **`kcl-eval-diff` captures `kcl--frozen-output` from the current buffer** but the diff is computed in temp files. If the user changes `kcl-eval-output-format` between freeze and diff, the frozen format is preserved (correct), but the diff labels don't indicate which format was used.
+11. ~~**`kcl-eval-diff` labels did not indicate frozen/current output formats.**~~ **DONE.** Diff labels now include the format used for each side.
 
-12. **`kcl-vet` interactive spec** prompts for both data file and schema name every time. There's no way to remember the last-used data file or auto-detect it from project structure.
+12. ~~**`kcl-vet` prompted for both data file and schema name every time.**~~ **DONE.** It remembers the last-used data file and schema default.
 
 13. **`kcl-import-add` is text-based.** It inserts imports into the first import block and avoids exact duplicates, but it does not sort imports or query the language server for module completion.
 
 ### Documentation
 
-14. **`kcl-doc--url-for` has a hardcoded URL set.** If kcl-lang.io restructures its documentation, all URLs break. There's no fallback to the language server's hover documentation.
+14. **`kcl-doc--url-for` has a hardcoded URL set.** If kcl-lang.io restructures its documentation, direct URL lookup can break. Eldoc now provides local summary fallback text, but browser lookup still uses the hardcoded URL table plus site search.
 
 15. **Doc lookup is not project-aware.** `kcl-open-doc-at-point` handles dotted standard-library names such as `math.log`, but unknown project-local modules fall back to kcl-lang.io search instead of LSP hover or local generated docs.
 
 ### Package Metadata
 
-16. **No MELPA recipe file.** The package is not yet on MELPA, GNU ELPA, or NonGNU ELPA.
+16. ~~**No MELPA recipe file.**~~ **DONE.** A recipe draft lives at `melpa/recipes/kcl-mode`. The package is not yet published on MELPA, GNU ELPA, or NonGNU ELPA.
 
-17. **No `Cask` or `Eask` file** for non-Nix package development workflows.
+17. ~~**No `Cask` or `Eask` file** for non-Nix package development workflows.~~ **DONE.** `Eask` provides script aliases for byte-compilation, lint, tests, and full validation.
 
-18. **No release automation.** CI exists via GitLab/Nix, but there is no release workflow, tag automation, or package publishing pipeline yet.
+18. **No release automation.** CI exists via GitLab/Nix, and release metadata exists via `CHANGELOG.md`, but there is no tag automation or package publishing pipeline yet.
 
 ---
 
@@ -195,7 +204,7 @@ _Items A1–A8 have been completed. See section 7 for details._
 
 9. ~~**`kcl-eval-region`** — Evaluate just the selected region.~~ **DONE as region-aware `kcl-eval-buffer`.** When the region is active, it writes imports plus the selected text to a temp `.k` file and evaluates that.
 
-10. **Eldoc integration.** Wire up `eldoc-documentation-function` to show type info / hover docs at point via the language server (eglot already does this, but a non-LSP fallback using `kcl-doc--url-for` data would be useful).
+10. ~~**Eldoc integration.** Wire up `eldoc-documentation-function` to show type info / hover docs at point via the language server (eglot already does this, but a non-LSP fallback using `kcl-doc--url-for` data would be useful).~~ **DONE.**
 
 11. ~~**`kcl-switch-output-format`** — Interactive command to cycle between yaml/json/toml for the eval output, with immediate re-eval.~~ **DONE.**
 
@@ -205,52 +214,52 @@ _Items A1–A8 have been completed. See section 7 for details._
 
 14. ~~**Project.el integration.** Define a `project-find-functions` entry that recognizes `kcl.mod` as a project root marker, giving KCL projects first-class support in Emacs's built-in project management.~~ **DONE.**
 
-15. **Xref integration (non-LSP).** For users without the language server, provide basic `xref-backend-functions` that can resolve imports to files by searching the `kcl.mod` vendor directory.
+15. ~~**Xref integration (non-LSP).** For users without the language server, provide basic `xref-backend-functions` that can resolve imports to files by searching the project.~~ **DONE.**
 
 16. ~~**`kcl-debug` / REPL.** KCL doesn't have a true REPL, but a pseudo-REPL that evaluates buffer contents on each save and shows output (like a live preview) would be valuable.~~ **DONE as `kcl-live-preview-mode`.**
 
-17. **Schema inheritance hierarchy visualization.** A command that shows the inheritance chain of a schema, using tree-sitter to parse the `(ParentSchema)` part of `schema Child(Parent):`.
+17. ~~**Schema inheritance hierarchy visualization.** A command that shows the inheritance chain of a schema.~~ **DONE as `kcl-schema-hierarchy-at-point`.**
 
-18. **`kcl-test` with test result parsing.** Currently `kcl-test` just launches compilation. A proper integration could parse test results and display them in a test-result buffer or integrate with Emacs's test frameworks.
+18. ~~**`kcl-test` with test result parsing.** Currently `kcl-test` just launches compilation.~~ **DONE via `kcl-test-compilation-mode` with KCL diagnostic regexps.** Future work could integrate with Emacs's native test UI.
 
-19. **Headerline breadcrumb.** Show the current schema/rule path in the header line (e.g., `schema Deployment > check`), leveraging tree-sitter parent traversal.
+19. ~~**Headerline breadcrumb.** Show the current schema/rule path in the header line.~~ **DONE as `kcl-breadcrumb-mode`.**
 
-20. **Flycheck integration.** In addition to flymake, provide a flycheck checker definition for users who prefer flycheck over flymake.
+20. ~~**Flycheck integration.** In addition to flymake, provide a flycheck checker definition for users who prefer flycheck over flymake.~~ **DONE as `kcl-flycheck.el`.**
 
 ### C. Release and Distribution
 
-21. **Create a MELPA recipe.** Requires: a `melpa/recipes/kcl-mode` file, ensuring `Package-Requires` headers are correct, and that byte-compilation succeeds cleanly. _(Byte-compilation is now clean; this is ready to pursue.)_
+21. ~~**Create a MELPA recipe.** Requires: a `melpa/recipes/kcl-mode` file, ensuring `Package-Requires` headers are correct, and that byte-compilation succeeds cleanly.~~ **DONE.**
 
 22. ~~**Add Gitlab CI pipeline using Nix.** Run the ERT test suite on push/PR. The CI would need: Emacs 27+ (for regex mode tests), Emacs 29+ (for treesit/eglot tests), the `kcl` CLI, and the tree-sitter grammar. Use `nix` for reproducible builds and actually running the tests, make the Gitlab CI job as thin as possible wrapper around Nix.~~ **DONE.** `nix flake check` builds the grammar and runs `make all`; `.gitlab-ci.yml` delegates to it.
 
-23. **Version management.** Add a `Version:` changelog and follow semver. The current `0.1.0` is a good starting point.
+23. ~~**Version management.** Add a `Version:` changelog and follow semver.~~ **DONE.** `CHANGELOG.md` tracks `0.1.0`.
 
 24. ~~**Add a `Makefile` or `Eask` file.**~~ **DONE.** `Makefile` added with `byte-compile`, `lint` (checkdoc), `test`, `clean` targets.
 
-25. **Write a `DEVELOPING.md`.** Document how to build the tree-sitter grammar, run tests, package, and other relevant tasks.
+25. ~~**Write a `DEVELOPING.md`.** Document how to build the tree-sitter grammar, run tests, package, and other relevant tasks.~~ **DONE.**
 
-26. ~~**Add an `Eask` or `Cask` file** for reproducible CI dependency management.~~ **DONE via Nix flake instead of Eask/Cask.**
+26. ~~**Add an `Eask` or `Cask` file** for reproducible CI dependency management.~~ **DONE.** Nix is the CI path, and `Eask` covers non-Nix package workflows.
 
 ### D. Advanced / Exploratory
 
 27. **Semantic token support.** The language server provides `semanticTokensProvider`. Tree-sitter mode could use semantic tokens from the server to enhance highlighting beyond what the grammar provides (e.g., distinguishing local variables from schema attributes). Emacs LSP-mode supports semantic tokens.
 
-28. **Inlay hints.** The language server supports `inlayHintProvider`. Emacs 29+ eglot and lsp-mode both support inlay hints. Document how to enable them, and potentially add a custom face for KCL-specific inlay hint styling.
+28. ~~**Inlay hints.** The language server supports `inlayHintProvider`. Emacs 29+ eglot and lsp-mode both support inlay hints. Document how to enable them, and potentially add a custom face for KCL-specific inlay hint styling.~~ **DONE.** README documents client-side controls.
 
 29. **Code lens.** If the language server adds code lens support in the future, wire it up.
 
 30. **DAP (Debug Adapter Protocol).** If KCL ever adds debugging support, provide a `dap-mode` integration.
 
-31. **Org-babel integration.** Allow KCL code blocks in Org mode files with `#+begin_src kcl` that can be evaluated and produce yaml/json output inline.
+31. ~~**Org-babel integration.** Allow KCL code blocks in Org mode files with `#+begin_src kcl` that can be evaluated and produce yaml/json output inline.~~ **DONE as `ob-kcl.el`.**
 
 32. **Polyglot/multi-mode support.** For files that embed KCL in YAML (like some Kusion configurations), provide a way to activate KCL highlighting in embedded contexts.
 
 ### E. Doom Emacs Integration Testing
 
 33. ~~**Add tests that validate the Doom Emacs configuration from the README.**~~ **DONE.** 15 ERT tests in `test/test-doom.el` validate:
-    - Symbol existence: all 11 commands referenced in `map!` blocks are `fboundp` and `commandp`
+    - Symbol existence: all 13 commands referenced in `map!` blocks are `fboundp` and `commandp`
     - Keymap parity: every command has a `C-c C-*` binding in both `kcl-mode-map` and `kcl-ts-mode-map`
-    - Exact binding verification: all 11 keybindings match expected command targets
+    - Exact binding verification: all 13 keybindings match expected command targets
     - Mode/feature availability: `auto-mode-alist`, major-mode activation, `provide` symbols, keymap validity
     - Variable availability: `kcl-format-on-save` is a custom variable, `kcl-language-server-command` is settable
     - LSP server-command fallback: `kcl-lsp-server-command` overrides and falls back to the core variable correctly
@@ -316,7 +325,7 @@ All eight items from section 3A have been completed and committed:
 
 ### Phase 2: Doom Emacs Integration Tests (E33)
 
-Added `test/test-doom.el` with 15 ERT tests that validate the Doom Emacs configuration documented in the README. Tests cover symbol existence (`fboundp`/`commandp`), keymap parity between both modes, exact keybinding verification, mode/feature availability, customization variables, and LSP server-command fallback behavior. Added the test suite to `test/run-tests.sh`. Total test count was 209 at that point; it is now 233.
+Added `test/test-doom.el` with 15 ERT tests that validate the Doom Emacs configuration documented in the README. Tests cover symbol existence (`fboundp`/`commandp`), keymap parity between both modes, exact keybinding verification, mode/feature availability, customization variables, and LSP server-command fallback behavior. Added the test suite to `test/run-tests.sh`. Total test count was 209 at that point; it is now 252.
 
 ### Phase 3: Makefile (C24)
 
@@ -336,7 +345,19 @@ Added `kcl-mod-update`, `kcl-mod-graph`, and `kcl-import-add`. Improved `kcl-got
 
 ### Phase 7: Documentation Lookup Fix
 
-Added `kcl-doc-symbol-at-point` and wired `kcl-open-doc-at-point` to use it, so dotted names like `math.log` resolve to standard-library function documentation. Total test count: 235.
+Added `kcl-doc-symbol-at-point` and wired `kcl-open-doc-at-point` to use it, so dotted names like `math.log` resolve to standard-library function documentation.
+
+### Phase 8: Core Tooling Improvements (B10, B15, B17, B18, B19)
+
+Improved decorator argument highlighting, continuation indentation, Flymake diagnostic parsing, diff format labels, and `kcl-vet` defaults. Added Eldoc fallback summaries, a non-LSP xref backend, `kcl-schema-hierarchy-at-point`, `kcl-breadcrumb-mode`, and `kcl-test-compilation-mode`.
+
+### Phase 9: Optional Integrations (B20, D31)
+
+Added `kcl-flycheck.el` for optional Flycheck diagnostics and `ob-kcl.el` for Org Babel execution. Added `test/test-optional.el` and wired it into `test/run-tests.sh`.
+
+### Phase 10: Release Metadata (C21, C23, C25, C26)
+
+Added a MELPA recipe draft, `CHANGELOG.md`, `DEVELOPING.md`, and `Eask`. README now documents optional integrations, breadcrumbs, live preview, semantic tokens, and inlay hints.
 
 ### Lessons Learned
 

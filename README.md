@@ -28,6 +28,8 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
   - `kcl-eval-buffer` -- evaluate and display output in a side buffer (yaml/json/toml)
   - `kcl-eval-freeze` -- save the current output as a baseline snapshot
   - `kcl-eval-diff` -- re-evaluate and diff against the frozen snapshot
+  - `kcl-switch-output-format` -- cycle yaml/json/toml and re-evaluate
+  - `kcl-live-preview-mode` -- re-evaluate automatically after saves
 
 - **CLI commands**
   - `kcl-lint-buffer` -- lint the current file
@@ -37,13 +39,19 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
   - `kcl-import-add` -- insert an import in the import section
   - `kcl-goto-imports` -- jump to the import section
 
-- **Compilation mode** -- `kcl-compilation-mode` with KCL error regexp, ANSI color support, and clickable error locations
+- **Editor integrations** -- project.el roots for `kcl.mod`, Eldoc fallback docs, basic xref, breadcrumbs, and schema hierarchy display
+
+- **Compilation modes** -- `kcl-compilation-mode` and `kcl-test-compilation-mode` with KCL error regexps, ANSI color support, and clickable error locations
 
 - **Documentation lookup** -- `kcl-open-doc-at-point` opens kcl-lang.io docs for the symbol at point (built-in types, functions, stdlib modules, keywords)
 
 - **Templates** -- built-in tempo templates for schema, rule, mixin, protocol, check, import, lambda, if, for, assert; optional YASnippet snippets in `snippets/`
 
 - **Flymake integration** -- `kcl-flymake-backend` for live diagnostics via `kcl lint`
+
+- **Optional Flycheck integration** -- `kcl-flycheck.el` registers a Flycheck checker without hard-requiring Flycheck at startup
+
+- **Optional Org Babel integration** -- `ob-kcl.el` evaluates `#+begin_src kcl` blocks through `kcl run`
 
 - **Transient menu** -- `kcl-transient` popup grouping all commands (falls back to `completing-read` when transient is unavailable)
 
@@ -57,6 +65,8 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
 - Emacs 29.1+ for `kcl-ts-mode` (tree-sitter-based) and `kcl-eglot.el`
 - [KCL CLI](https://kcl-lang.io/docs/user_docs/getting-started/install/) for `kcl run` and `kcl fmt` commands
 - [kcl-language-server](https://kcl-lang.io/docs/user_docs/getting-started/install/) for LSP features
+- Optional: [Flycheck](https://www.flycheck.org/) for `kcl-flycheck.el`
+- Optional: Org mode for `ob-kcl.el`
 
 ### Installing the tree-sitter grammar
 
@@ -160,6 +170,37 @@ Flymake is automatically set up when `kcl-mode` or `kcl-ts-mode` activates. To e
 (add-hook 'kcl-ts-mode-hook #'flymake-mode)
 ```
 
+### Flycheck
+
+```elisp
+(require 'kcl-flycheck)
+(add-hook 'kcl-mode-hook #'flycheck-mode)
+(add-hook 'kcl-ts-mode-hook #'flycheck-mode)
+```
+
+### Org Babel
+
+```elisp
+(require 'ob-kcl)
+
+;; Example Org block:
+;; #+begin_src kcl :format yaml
+;; x = 1
+;; #+end_src
+```
+
+Use `:format yaml`, `:format json`, or `:format toml` to control `kcl run --format`.
+
+### Breadcrumbs and live preview
+
+```elisp
+(add-hook 'kcl-mode-hook #'kcl-breadcrumb-mode)
+(add-hook 'kcl-ts-mode-hook #'kcl-breadcrumb-mode)
+
+;; Re-evaluate the buffer after each save.
+(add-hook 'kcl-mode-hook #'kcl-live-preview-mode)
+```
+
 ### Format on save
 
 ```elisp
@@ -172,6 +213,8 @@ Flymake is automatically set up when `kcl-mode` or `kcl-ts-mode` activates. To e
 ;; Default is "yaml"; also supports "json" and "toml"
 (setq kcl-eval-output-format "json")
 ```
+
+Use `M-x kcl-switch-output-format` to cycle formats and immediately re-evaluate.
 
 ### Custom KCL binary path
 
@@ -188,6 +231,12 @@ Flymake is automatically set up when `kcl-mode` or `kcl-ts-mode` activates. To e
 ;; For eglot:
 (setq kcl-eglot-server-command '("/path/to/kcl-language-server"))
 ```
+
+### Semantic tokens and inlay hints
+
+`kcl-language-server` advertises semantic tokens and inlay hints. Use the
+standard client controls for your LSP package, for example `lsp-semantic-tokens-enable`
+with lsp-mode or `eglot-inlay-hints-mode` with Eglot when available.
 
 ### YASnippet snippets
 
@@ -234,6 +283,8 @@ Add the following to your Doom Emacs configuration:
         :desc "Eval buffer"      "e" #'kcl-eval-buffer
         :desc "Freeze snapshot"  "s" #'kcl-eval-freeze
         :desc "Diff snapshot"    "d" #'kcl-eval-diff
+        :desc "Output format"    "o" #'kcl-switch-output-format
+        :desc "Live preview"     "p" #'kcl-live-preview-mode
         ;; Tooling
         :desc "Format buffer"    "f" #'kcl-format-buffer
         :desc "Lint buffer"      "l" #'kcl-lint-buffer
@@ -257,6 +308,8 @@ Add the following to your Doom Emacs configuration:
         :desc "Eval buffer"      "e" #'kcl-eval-buffer
         :desc "Freeze snapshot"  "s" #'kcl-eval-freeze
         :desc "Diff snapshot"    "d" #'kcl-eval-diff
+        :desc "Output format"    "o" #'kcl-switch-output-format
+        :desc "Live preview"     "p" #'kcl-live-preview-mode
         :desc "Format buffer"    "f" #'kcl-format-buffer
         :desc "Lint buffer"      "l" #'kcl-lint-buffer
         :desc "Test project"     "t" #'kcl-test
@@ -286,6 +339,8 @@ With LSP enabled, Doom's built-in `SPC c` bindings work automatically in KCL buf
 | `SPC m e` | Eval buffer (side output)  |
 | `SPC m s` | Freeze output snapshot     |
 | `SPC m d` | Diff against snapshot      |
+| `SPC m o` | Cycle output format        |
+| `SPC m p` | Toggle live preview        |
 | `SPC m f` | Format (`kcl fmt`)         |
 | `SPC m l` | Lint buffer                |
 | `SPC m t` | Test project               |
@@ -332,6 +387,8 @@ If you manage your system with Nix and want the language server available withou
 | `C-c C-e` | `kcl-eval-buffer`      | Eval and show output in side buf |
 | `C-c C-s` | `kcl-eval-freeze`      | Freeze output as snapshot        |
 | `C-c C-d` | `kcl-eval-diff`        | Diff against frozen snapshot     |
+| `C-c C-o` | `kcl-switch-output-format` | Cycle eval output format     |
+| `C-c C-p` | `kcl-live-preview-mode`| Toggle live preview              |
 | `C-c C-f` | `kcl-format-buffer`    | Format the current file          |
 | `C-c C-l` | `kcl-lint-buffer`      | Lint the current file            |
 | `C-c C-t` | `kcl-test`             | Run tests in project             |
@@ -382,6 +439,7 @@ KCL_NUMAFLOW_DIR=/path/to/kcl-numaflow/numaflow/v1alpha1 \
 emacs --batch -L . -l test/test-fontlock.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -l test/test-ts-mode.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -l test/test-lsp.el -f ert-run-tests-batch-and-exit
+emacs --batch -L . -l ert -l test/test-optional.el -f ert-run-tests-batch-and-exit
 emacs --batch -L . -l kcl-mode -l kcl-ts-mode -l test/test-commands.el -f ert-run-tests-batch-and-exit
 
 # Run live LSP tests (requires kcl-language-server)

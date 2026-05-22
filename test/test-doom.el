@@ -28,6 +28,8 @@
     kcl-eval-buffer
     kcl-eval-freeze
     kcl-eval-diff
+    kcl-switch-output-format
+    kcl-live-preview-mode
     kcl-format-buffer
     kcl-lint-buffer
     kcl-test
@@ -57,6 +59,8 @@
     kcl-eval-buffer
     kcl-eval-freeze
     kcl-eval-diff
+    kcl-switch-output-format
+    kcl-live-preview-mode
     kcl-format-buffer
     kcl-lint-buffer
     kcl-test
@@ -102,6 +106,8 @@
     ("C-c C-e" . kcl-eval-buffer)
     ("C-c C-s" . kcl-eval-freeze)
     ("C-c C-d" . kcl-eval-diff)
+    ("C-c C-o" . kcl-switch-output-format)
+    ("C-c C-p" . kcl-live-preview-mode)
     ("C-c C-f" . kcl-format-buffer)
     ("C-c C-l" . kcl-lint-buffer)
     ("C-c C-t" . kcl-test)
