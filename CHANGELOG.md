@@ -11,8 +11,8 @@ project follows semantic versioning.
 - Shared KCL CLI commands for run, eval, format, lint, test, vet, module
   management, import insertion, documentation lookup, snapshots, and live
   preview.
-- Flymake diagnostics, optional Flycheck checker, and optional Org Babel
-  execution support.
+- Flymake diagnostics, optional Flycheck checker, optional embedded YAML KCL
+  support, and optional Org Babel execution support.
 - `lsp-mode` and Eglot registration for `kcl-language-server`.
 - Project.el, Eldoc, xref, schema hierarchy, breadcrumb, imenu, outline, and
   `which-function-mode` integrations.

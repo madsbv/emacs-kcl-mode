@@ -10,13 +10,14 @@ This document captures the current state of the `emacs-kcl-mode` codebase, the p
 
 ```
 emacs-kcl-mode/
-├── kcl-mode.el          # Regex-based major mode + ALL shared commands (1349 lines)
+├── kcl-mode.el          # Regex-based major mode + ALL shared commands (1605 lines)
 ├── kcl-ts-mode.el       # Tree-sitter major mode (346 lines)
 ├── kcl-lsp.el           # lsp-mode integration (115 lines)
 ├── kcl-eglot.el         # eglot integration (80 lines)
 ├── kcl-flycheck.el      # Optional Flycheck integration (64 lines)
+├── kcl-polyglot.el      # Optional embedded KCL support (78 lines)
 ├── ob-kcl.el            # Optional Org Babel integration (63 lines)
-├── Makefile             # Build targets: byte-compile, lint, test, nix-test, flake-check, clean (62 lines)
+├── Makefile             # Build targets: byte-compile, lint, test, nix-test, flake-check, clean
 ├── flake.nix            # Reproducible Nix dev shell and checks (115 lines)
 ├── flake.lock           # Locked nixpkgs input
 ├── .gitlab-ci.yml       # Thin GitLab CI wrapper around `nix flake check`
@@ -24,7 +25,7 @@ emacs-kcl-mode/
 ├── CHANGELOG.md         # Semver release notes
 ├── DEVELOPING.md        # Contributor workflow documentation
 ├── melpa/recipes/kcl-mode # MELPA recipe draft
-├── README.md            # User documentation
+├── README.md            # User documentation (465 lines)
 ├── AGENTS.md            # This file
 ├── .gitignore
 ├── snippets/kcl-mode/   # 10 YASnippet snippet files
@@ -35,16 +36,16 @@ emacs-kcl-mode/
 │   ├── test-fontlock.el  # 65 regex mode ERT tests
 │   ├── test-ts-mode.el   # 46 tree-sitter mode ERT tests
 │   ├── test-lsp.el       # 19 LSP tests (11 config + 8 live eglot)
-│   ├── test-commands.el  # 81 command/feature ERT tests
+│   ├── test-commands.el  # 91 command/feature ERT tests
 │   ├── test-doom.el      # 15 Doom Emacs integration tests
-│   ├── test-optional.el  # 3 optional integration tests
+│   ├── test-optional.el  # 4 optional integration tests
 │   ├── test-integration.el # 9 integration tests (numaflow)
 │   ├── run-tests.sh      # Test runner script (runs all suites)
 │   └── compare-nvim.sh   # Neovim cross-validation script
 └── libtree-sitter-kcl.so # Compiled grammar (gitignored, build artifact)
 ```
 
-Total: ~5700 lines across source, tests, and docs. 252 ERT tests, all passing.
+Total: ~5900 lines across source, tests, and docs. 253 ERT tests, all passing.
 
 ### Architectural Decisions
 
@@ -64,11 +65,11 @@ Total: ~5700 lines across source, tests, and docs. 252 ERT tests, all passing.
 
 8. **Flymake backend uses temp files.** Buffer contents are written to a temporary `.k` file for linting, so unsaved buffers can be checked without forcing a save.
 
-9. **Byte-compilation and checkdoc are clean.** All six `.el` files compile with zero warnings and pass checkdoc. The `Makefile` enforces this via `make byte-compile` and `make lint`.
+9. **Byte-compilation and checkdoc are clean.** All seven `.el` files compile with zero warnings and pass checkdoc. The `Makefile` enforces this via `make byte-compile` and `make lint`.
 
 10. **Nix is the reproducible validation path.** `flake.nix` builds the KCL tree-sitter grammar, provides `emacs`, `kcl`, and `kcl-language-server` in a dev shell, and runs `make all` in `nix flake check`. `.gitlab-ci.yml` is intentionally thin and delegates to that check.
 
-11. **Optional integrations stay dependency-light.** `kcl-lsp.el`, `kcl-eglot.el`, and `kcl-flycheck.el` defer registration until their optional packages load. `ob-kcl.el` requires Org Babel because it provides a Babel executor.
+11. **Optional integrations stay dependency-light.** `kcl-lsp.el`, `kcl-eglot.el`, `kcl-flycheck.el`, and `kcl-polyglot.el` defer registration until their optional packages load. `ob-kcl.el` requires Org Babel because it provides a Babel executor.
 
 ### KCL Language Facts (Discovered During Development)
 
@@ -242,7 +243,7 @@ _Items A1–A8 have been completed. See section 7 for details._
 
 ### D. Advanced / Exploratory
 
-27. **Semantic token support.** The language server provides `semanticTokensProvider`. Tree-sitter mode could use semantic tokens from the server to enhance highlighting beyond what the grammar provides (e.g., distinguishing local variables from schema attributes). Emacs LSP-mode supports semantic tokens.
+27. ~~**Semantic token support.** The language server provides `semanticTokensProvider`. Tree-sitter mode could use semantic tokens from the server to enhance highlighting beyond what the grammar provides.~~ **DONE via standard LSP clients.** README documents semantic-token controls; core mode avoids duplicating lsp-mode/Eglot behavior.
 
 28. ~~**Inlay hints.** The language server supports `inlayHintProvider`. Emacs 29+ eglot and lsp-mode both support inlay hints. Document how to enable them, and potentially add a custom face for KCL-specific inlay hint styling.~~ **DONE.** README documents client-side controls.
 
@@ -252,7 +253,7 @@ _Items A1–A8 have been completed. See section 7 for details._
 
 31. ~~**Org-babel integration.** Allow KCL code blocks in Org mode files with `#+begin_src kcl` that can be evaluated and produce yaml/json output inline.~~ **DONE as `ob-kcl.el`.**
 
-32. **Polyglot/multi-mode support.** For files that embed KCL in YAML (like some Kusion configurations), provide a way to activate KCL highlighting in embedded contexts.
+32. ~~**Polyglot/multi-mode support.** For files that embed KCL in YAML (like some Kusion configurations), provide a way to activate KCL highlighting in embedded contexts.~~ **DONE as `kcl-polyglot.el` for mmm-mode YAML literal blocks.**
 
 ### E. Doom Emacs Integration Testing
 
@@ -353,11 +354,11 @@ Improved decorator argument highlighting, continuation indentation, Flymake diag
 
 ### Phase 9: Optional Integrations (B20, D31)
 
-Added `kcl-flycheck.el` for optional Flycheck diagnostics and `ob-kcl.el` for Org Babel execution. Added `test/test-optional.el` and wired it into `test/run-tests.sh`.
+Added `kcl-flycheck.el` for optional Flycheck diagnostics, `kcl-polyglot.el` for embedded YAML KCL highlighting through mmm-mode, and `ob-kcl.el` for Org Babel execution. Added `test/test-optional.el` and wired it into `test/run-tests.sh`.
 
 ### Phase 10: Release Metadata (C21, C23, C25, C26)
 
-Added a MELPA recipe draft, `CHANGELOG.md`, `DEVELOPING.md`, and `Eask`. README now documents optional integrations, breadcrumbs, live preview, semantic tokens, and inlay hints.
+Added a MELPA recipe draft, `CHANGELOG.md`, `DEVELOPING.md`, and `Eask`. README now documents optional integrations, embedded KCL support, breadcrumbs, live preview, semantic tokens, and inlay hints.
 
 ### Lessons Learned
 

@@ -53,6 +53,8 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
 
 - **Optional Org Babel integration** -- `ob-kcl.el` evaluates `#+begin_src kcl` blocks through `kcl run`
 
+- **Optional embedded KCL support** -- `kcl-polyglot.el` registers mmm-mode regions for KCL YAML literal blocks
+
 - **Transient menu** -- `kcl-transient` popup grouping all commands (falls back to `completing-read` when transient is unavailable)
 
 - **Format on save** -- Optional automatic formatting via `kcl fmt`
@@ -67,6 +69,7 @@ Emacs major mode for editing [KCL](https://kcl-lang.io) (Kusion Configuration La
 - [kcl-language-server](https://kcl-lang.io/docs/user_docs/getting-started/install/) for LSP features
 - Optional: [Flycheck](https://www.flycheck.org/) for `kcl-flycheck.el`
 - Optional: Org mode for `ob-kcl.el`
+- Optional: [mmm-mode](https://github.com/purcell/mmm-mode) for `kcl-polyglot.el`
 
 ### Installing the tree-sitter grammar
 
@@ -190,6 +193,16 @@ Flymake is automatically set up when `kcl-mode` or `kcl-ts-mode` activates. To e
 ```
 
 Use `:format yaml`, `:format json`, or `:format toml` to control `kcl run --format`.
+
+### Embedded KCL in YAML
+
+`kcl-polyglot.el` registers an mmm-mode class for YAML literal blocks keyed by
+`kcl`, `kclCode`, or `kcl_code`:
+
+```elisp
+(require 'mmm-mode)
+(require 'kcl-polyglot)
+```
 
 ### Breadcrumbs and live preview
 

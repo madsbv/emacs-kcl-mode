@@ -30,6 +30,15 @@
   (let ((result (org-babel-execute:kcl "x = 1" '((:format . "yaml")))))
     (should (string-match-p "x: 1" result))))
 
+(ert-deftest kcl-polyglot-loads-without-mmm-mode ()
+  "kcl-polyglot should load even when mmm-mode has not been loaded."
+  (require 'kcl-polyglot)
+  (should (featurep 'kcl-polyglot))
+  (should (fboundp 'kcl-polyglot-register-mmm))
+  (should (string-match-p
+           (kcl-polyglot--yaml-front-regexp)
+           "kcl: |")))
+
 (provide 'test-optional)
 
 ;;; test-optional.el ends here

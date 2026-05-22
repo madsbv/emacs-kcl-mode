@@ -78,6 +78,7 @@ loaded:
 - `kcl-lsp.el` registers after `lsp-mode` loads.
 - `kcl-eglot.el` registers after Eglot loads.
 - `kcl-flycheck.el` registers after Flycheck loads.
+- `kcl-polyglot.el` registers embedded YAML regions after mmm-mode loads.
 - `ob-kcl.el` requires Org Babel because it provides an Org language executor.
 
 Packaging metadata lives in:
