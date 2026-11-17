@@ -5,7 +5,7 @@
          "0.1.0"
          "Major mode for editing KCL files")
 
-(website-url "https://github.com/kcl-lang/emacs-kcl-mode")
+(website-url "https://github.com/madsbv/emacs-kcl-mode")
 (keywords "languages" "tools")
 (package-file "kcl-mode.el")
 

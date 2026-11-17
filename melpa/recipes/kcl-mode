@@ -1,4 +1,4 @@
 (kcl-mode
  :fetcher github
- :repo "kcl-lang/emacs-kcl-mode"
+ :repo "madsbv/emacs-kcl-mode"
  :files (:defaults "snippets"))

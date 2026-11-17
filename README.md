@@ -106,14 +106,14 @@ nix run nixpkgs#kcl-language-server
 
 ```elisp
 (straight-use-package
- '(kcl-mode :type git :host github :repo "kcl-lang/emacs-kcl-mode"))
+ '(kcl-mode :type git :host github :repo "madsbv/emacs-kcl-mode"))
 ```
 
 ### From source (use-package + straight)
 
 ```elisp
 (use-package kcl-mode
-  :straight (:host github :repo "kcl-lang/emacs-kcl-mode"))
+  :straight (:host github :repo "madsbv/emacs-kcl-mode"))
 ```
 
 ### Manual
@@ -271,7 +271,7 @@ Add the following to your Doom Emacs configuration:
 ```elisp
 ;; From GitHub:
 (package! kcl-mode
-  :recipe (:host github :repo "kcl-lang/emacs-kcl-mode"))
+  :recipe (:host github :repo "madsbv/emacs-kcl-mode"))
 
 ;; Or from a local git repo (useful during development):
 (package! kcl-mode

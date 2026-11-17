@@ -1,11 +1,11 @@
 ;;; ob-kcl.el --- Org Babel support for KCL -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025-2026 The KCL Authors
+;; Copyright (C) 2025-2026 Mads Bach Villadsen
 ;; SPDX-License-Identifier: Apache-2.0
 
-;; Author: The KCL Authors
-;; Maintainer: The KCL Authors
-;; URL: https://github.com/kcl-lang/emacs-kcl-mode
+;; Author: Mads Bach Villadsen
+;; Maintainer: Mads Bach Villadsen
+;; URL: https://github.com/madsbv/emacs-kcl-mode
 ;; Version: 0.1.0
 ;; Keywords: languages, org, babel
 ;; Package-Requires: ((emacs "27.1") (org "9.1"))

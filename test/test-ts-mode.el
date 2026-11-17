@@ -1,6 +1,6 @@
 ;;; test-ts-mode.el --- Tests for kcl-ts-mode -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2024 The KCL Authors
+;; Copyright (C) 2024 Mads Bach Villadsen
 ;; SPDX-License-Identifier: Apache-2.0
 
 ;;; Commentary:

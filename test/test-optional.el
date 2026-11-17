@@ -1,6 +1,6 @@
 ;;; test-optional.el --- Optional integration tests for KCL -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025-2026 The KCL Authors
+;; Copyright (C) 2025-2026 Mads Bach Villadsen
 ;; SPDX-License-Identifier: Apache-2.0
 
 ;;; Commentary:
