@@ -12,7 +12,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-NVIM_PLUGIN_DIR="/home/mbv/workspace/github/kcl-lang/kcl.nvim"
+# Required: path to a kcl.nvim checkout (the syntax plugin being compared against).
+NVIM_PLUGIN_DIR="${KCL_NVIM_PLUGIN_DIR:-}"
+if [ -z "$NVIM_PLUGIN_DIR" ] || [ ! -d "$NVIM_PLUGIN_DIR" ]; then
+  echo "Set KCL_NVIM_PLUGIN_DIR to a kcl.nvim checkout" >&2
+  exit 1
+fi
 TEST_FILE="${1:-$SCRIPT_DIR/sample.k}"
 
 echo "=== Cross-validation: Emacs kcl-mode vs Neovim kcl.nvim ==="

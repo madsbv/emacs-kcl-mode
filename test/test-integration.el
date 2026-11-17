@@ -11,8 +11,7 @@
 (require 'imenu)
 
 (defvar kcl-test-numaflow-dir
-  (or (getenv "KCL_NUMAFLOW_DIR")
-      "/home/mbv/workspace/github/kcl-lang/kcl-numaflow/numaflow/v1alpha1/")
+  (or (getenv "KCL_NUMAFLOW_DIR") "")
   "Directory containing numaflow KCL files.")
 
 (defvar kcl-test-numaflow-files nil

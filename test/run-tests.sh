@@ -8,7 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 EMACS="${EMACS:-emacs}"
 KCL_TREE_SITTER_LOAD_PATH="${KCL_TREE_SITTER_LOAD_PATH:-$PROJECT_DIR}"
-KCL_NUMAFLOW_DIR="${KCL_NUMAFLOW_DIR:-/home/mbv/workspace/github/kcl-lang/kcl-numaflow/numaflow/v1alpha1/}"
+# Optional: path to a kcl-numaflow checkout. Unset means the integration suite is skipped.
+KCL_NUMAFLOW_DIR="${KCL_NUMAFLOW_DIR:-}"
 FAILURES=0
 
 echo "=== Running kcl-mode ERT tests ==="
