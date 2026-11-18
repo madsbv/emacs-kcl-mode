@@ -545,7 +545,7 @@ Intended for use on `before-save-hook'.  The guard variable
 (defun kcl-project-root ()
   "Return the KCL project root directory.
 Looks for `kcl.mod' in parent directories.  Returns nil if not found."
-  (when-let ((file (or (buffer-file-name)
+  (when-let* ((file (or (buffer-file-name)
                        default-directory)))
     (locate-dominating-file file "kcl.mod")))
 
@@ -555,7 +555,7 @@ Looks for `kcl.mod' in parent directories.  Returns nil if not found."
   "Return a project instance for DIR when `kcl.mod' exists above it.
 Intended for `project-find-functions'.  Returns a `(transient . ROOT)'
 cons so that Emacs's built-in project commands work for KCL projects."
-  (when-let ((root (locate-dominating-file dir "kcl.mod")))
+  (when-let* ((root (locate-dominating-file dir "kcl.mod")))
     (cons 'transient root)))
 
 ;;; Compilation Mode
