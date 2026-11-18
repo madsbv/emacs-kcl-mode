@@ -323,6 +323,21 @@ If OCCURRENCE is given, find the Nth occurrence (1-indexed)."
     (beginning-of-defun)
     (should (looking-at "schema Foo"))))
 
+(defconst kcl-ts-test--sample
+  (expand-file-name "sample.k" (file-name-directory (or load-file-name buffer-file-name)))
+  "Path to test/sample.k, resolved at load time.")
+
+(ert-deftest kcl-ts-test-no-disabled-font-lock-features ()
+  "Opening sample.k must not disable any font-lock feature (grammar mismatch)."
+  (let ((warnings nil) (sample kcl-ts-test--sample))
+    (cl-letf (((symbol-function (quote display-warning))
+               (lambda (_type msg &rest _) (push msg warnings))))
+      (with-temp-buffer
+        (insert-file-contents sample)
+        (kcl-ts-mode)
+        (font-lock-ensure)))
+    (should-not warnings)))
+
 (provide 'test-ts-mode)
 
 ;;; test-ts-mode.el ends here
